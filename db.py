@@ -523,14 +523,14 @@ def delete_build(db_path: str, build_id: int, user_id: int) -> bool:
         return False
 
 
-def add_trophy_to_user(db_path: str, user_id: int, trophy_id: str) -> bool:
+def add_trophy_to_user(db_path: str, user_id: int, trophy_name: str) -> bool:
     """
     Добавляет трофей к списку трофеев пользователя.
     
     Args:
         db_path: Путь к файлу базы данных
         user_id: ID пользователя Telegram
-        trophy_id: ID трофея для добавления
+        trophy_name: Имя трофея с emoji для добавления (например, "Легенда Цусимы 🗡️")
     
     Returns:
         True при успешном добавлении, иначе False
@@ -559,8 +559,8 @@ def add_trophy_to_user(db_path: str, user_id: int, trophy_id: str) -> bool:
         # Разбиваем строку на список, добавляем новый трофей если его нет
         trophy_list = [t.strip() for t in current_trophies.split(',') if t.strip()]
         
-        if trophy_id not in trophy_list:
-            trophy_list.append(trophy_id)
+        if trophy_name not in trophy_list:
+            trophy_list.append(trophy_name)
             new_trophies = ','.join(trophy_list)
             
             # Обновляем поле trophies
