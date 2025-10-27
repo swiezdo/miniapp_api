@@ -8,7 +8,7 @@ import shutil
 import json
 import time
 import requests
-from fastapi import FastAPI, HTTPException, Depends, Header, Form, File, UploadFile
+from fastapi import FastAPI, HTTPException, Depends, Header, Form, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -177,12 +177,12 @@ if not BOT_TOKEN:
 if not ALLOWED_ORIGIN:
     raise ValueError("ALLOWED_ORIGIN не установлен в .env файле")
 
-# Настройка CORS (временно разрешаем все origins для тестирования)
+# Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Временно разрешаем все origins
-    allow_credentials=False,  # Отключаем credentials для тестирования
-    allow_methods=["*"],
+    allow_origins=["https://swiezdo.github.io", "http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -191,7 +191,7 @@ init_db(DB_PATH)
 
 # Глобальный обработчик OPTIONS запросов
 @app.options("/{path:path}")
-async def options_handler(path: str):
+async def options_handler(path: str, request: Request):
     """
     Глобальный обработчик OPTIONS запросов для CORS.
     """
@@ -200,10 +200,10 @@ async def options_handler(path: str):
     return Response(
         status_code=200,
         headers={
-            "Access-Control-Allow-Origin": "*",  # Временно разрешаем все origins
+            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "*",
-            "Access-Control-Allow-Credentials": "false",
+            "Access-Control-Allow-Credentials": "true",
         }
     )
 
@@ -1100,7 +1100,7 @@ if __name__ == "__main__":
     
     uvicorn.run(
         "app:app",
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=8000,
         reload=False,
         log_level="info"
