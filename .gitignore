@@ -151,3 +151,7 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+
+# Application specific directories
+builds/
+trophies/
