@@ -513,11 +513,21 @@ async def create_build_endpoint(
             detail="Класс обязателен"
         )
     
-    # Парсим теги (строка через запятую)
+    # Парсим теги (может быть JSON строка или строка через запятую)
     try:
-        tags_list = [t.strip() for t in tags.split(',') if t.strip()] if tags else []
+        import json
+        # Пытаемся распарсить как JSON
+        if tags.startswith('[') and tags.endswith(']'):
+            tags_list = json.loads(tags)
+        else:
+            # Иначе парсим как строку через запятую
+            tags_list = [t.strip() for t in tags.split(',') if t.strip()]
     except:
-        tags_list = []
+        # Если не удалось распарсить, пытаемся как строку через запятую
+        try:
+            tags_list = [t.strip() for t in tags.split(',') if t.strip()] if tags else []
+        except:
+            tags_list = []
     
     # Создаем временный билд для получения build_id
     build_data = {
