@@ -863,7 +863,7 @@ async def get_user_info(user_id: int):
     try:
         user = get_user(DB_PATH, user_id)
         if user:
-            return {"psn_id": user.get('psn_id', str(user_id))}
+            return user
         raise HTTPException(status_code=404, detail="User not found")
     except Exception as e:
         raise HTTPException(status_code=404, detail="User not found")

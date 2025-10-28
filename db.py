@@ -31,8 +31,7 @@ def init_db(db_path: str) -> None:
             modes TEXT,
             goals TEXT,
             difficulties TEXT,
-            trophies TEXT,
-            updated_at INTEGER
+            trophies TEXT
         )
     ''')
     
@@ -46,8 +45,7 @@ def init_db(db_path: str) -> None:
         CREATE TABLE IF NOT EXISTS trophies (
             trophy_id INTEGER PRIMARY KEY AUTOINCREMENT,
             trophy_name TEXT NOT NULL UNIQUE,
-            description TEXT,
-            created_at INTEGER
+            description TEXT
         )
     ''')
     
@@ -103,7 +101,7 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
     cursor = conn.cursor()
     
     cursor.execute('''
-        SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties, trophies, updated_at
+        SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties, trophies
         FROM users WHERE user_id = ?
     ''', (user_id,))
     
@@ -122,8 +120,7 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
         'modes': [m.strip() for m in row[4].split(',') if m.strip()] if row[4] else [],
         'goals': [g.strip() for g in row[5].split(',') if g.strip()] if row[5] else [],
         'difficulties': [d.strip() for d in row[6].split(',') if d.strip()] if row[6] else [],
-        'trophies': [t.strip() for t in row[7].split(',') if t.strip()] if row[7] else [],  # Массив названий трофеев
-        'updated_at': row[8]
+        'trophies': [t.strip() for t in row[7].split(',') if t.strip()] if row[7] else []  # Массив названий трофеев
     }
     
     return profile
@@ -171,7 +168,7 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
             cursor.execute('''
                 UPDATE users 
                 SET real_name = ?, psn_id = ?, platforms = ?, modes = ?, 
-                    goals = ?, difficulties = ?, updated_at = ?
+                    goals = ?, difficulties = ?
                 WHERE user_id = ?
             ''', (
                 profile_data.get('real_name', ''),
@@ -180,15 +177,14 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 modes_str,
                 goals_str,
                 difficulties_str,
-                current_time,
                 user_id
             ))
         else:
             # INSERT нового пользователя с пустым trophies
             cursor.execute('''
                 INSERT INTO users 
-                (user_id, real_name, psn_id, platforms, modes, goals, difficulties, trophies, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (user_id, real_name, psn_id, platforms, modes, goals, difficulties, trophies)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user_id,
                 profile_data.get('real_name', ''),
@@ -197,8 +193,7 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 modes_str,
                 goals_str,
                 difficulties_str,
-                trophies_str,
-                current_time
+                trophies_str
             ))
         
         conn.commit()
@@ -581,9 +576,9 @@ def add_trophy_to_user(db_path: str, user_id: int, trophy_name: str) -> bool:
             # Обновляем поле trophies
             cursor.execute('''
                 UPDATE users 
-                SET trophies = ?, updated_at = ?
+                SET trophies = ?
                 WHERE user_id = ?
-            ''', (new_trophies, int(time.time()), user_id))
+            ''', (new_trophies, user_id))
             
             success = cursor.rowcount > 0
             conn.commit()
@@ -687,9 +682,9 @@ def sync_trophies_from_json(db_path: str, json_path: str) -> None:
             else:
                 # Добавляем новый трофей
                 cursor.execute('''
-                    INSERT INTO trophies (trophy_name, description, created_at)
-                    VALUES (?, ?, ?)
-                ''', (trophy_name, description, current_time))
+                    INSERT INTO trophies (trophy_name, description)
+                    VALUES (?, ?)
+                ''', (trophy_name, description))
                 print(f"Добавлен новый трофей: {trophy_name}")
         
         # Удаляем трофеи, которых нет в JSON
