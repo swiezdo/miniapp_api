@@ -19,7 +19,7 @@ import re
 
 # Импортируем наши модули
 from security import validate_init_data, get_user_id_from_init_data
-from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, add_trophy_to_user, get_all_users
+from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, add_trophy_to_user, get_all_users, sync_trophies_from_json, get_all_trophies, get_trophy_by_id, get_trophy_by_name
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -189,6 +189,19 @@ app.add_middleware(
 # Инициализируем базу данных при запуске
 init_db(DB_PATH)
 
+# Синхронизируем трофеи из JSON при запуске
+@app.on_event("startup")
+async def startup_event():
+    """
+    Синхронизация трофеев из JSON файла при запуске приложения.
+    """
+    try:
+        trophies_json_path = os.path.join(os.path.dirname(__file__), 'trophies.json')
+        sync_trophies_from_json(DB_PATH, trophies_json_path)
+        print("✅ Синхронизация трофеев завершена")
+    except Exception as e:
+        print(f"❌ Ошибка синхронизации трофеев: {e}")
+
 # Глобальный обработчик OPTIONS запросов
 @app.options("/{path:path}")
 async def options_handler(path: str, request: Request):
@@ -270,6 +283,43 @@ async def health_check():
     Эндпоинт для проверки работоспособности API.
     """
     return {"status": "ok", "message": "Tsushima Mini App API работает"}
+
+
+@app.get("/api/trophies.list")
+async def get_trophies_list():
+    """
+    Получает список всех трофеев.
+    """
+    try:
+        trophies = get_all_trophies(DB_PATH)
+        return [{
+            "trophy_id": trophy[0],
+            "trophy_name": trophy[1],
+            "description": trophy[2]
+        } for trophy in trophies]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка получения трофеев: {str(e)}")
+
+
+@app.get("/api/trophies.getById/{trophy_id}")
+async def get_trophy_by_id_endpoint(trophy_id: int):
+    """
+    Получает трофей по ID.
+    """
+    try:
+        trophy = get_trophy_by_id(DB_PATH, trophy_id)
+        if not trophy:
+            raise HTTPException(status_code=404, detail="Трофей не найден")
+        
+        return {
+            "trophy_id": trophy[0],
+            "trophy_name": trophy[1],
+            "description": trophy[2]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка получения трофея: {str(e)}")
 
 
 @app.options("/api/profile.get")
@@ -762,29 +812,38 @@ async def get_build_photo(build_id: int, photo_name: str):
     return FileResponse(photo_path, media_type='image/jpeg')
 
 
-@app.get("/api/trophy_info/{trophy_name}")
-async def get_trophy_info(trophy_name: str):
-    """Получает информацию о трофее по имени"""
+@app.get("/api/trophy_info/{trophy_identifier}")
+async def get_trophy_info(trophy_identifier: str):
+    """Получает информацию о трофее по ID или имени"""
     try:
         trophies_data = load_trophies_data()
         
-        # Сначала ищем по имени (новый формат)
+        # Сначала ищем по trophy_id (например, "trophy1")
+        if trophy_identifier in trophies_data:
+            trophy_info = trophies_data[trophy_identifier]
+            return {
+                "name": trophy_info.get('name', trophy_identifier),
+                "emoji": trophy_info.get('emoji', '🏆'),
+                "trophy_id": trophy_identifier
+            }
+        
+        # Если не найден по ID, ищем по полному имени (например, "Легенда Цусимы 🗡️")
         for trophy_id, trophy_info in trophies_data.items():
             name = trophy_info.get('name', trophy_id)
             emoji = trophy_info.get('emoji', '🏆')
             full_name = f"{name} {emoji}"
             
-            if full_name == trophy_name:
+            if full_name == trophy_identifier:
                 return {
                     "name": name,
                     "emoji": emoji,
-                    "trophy_id": trophy_id  # Для обратной совместимости с файловой системой
+                    "trophy_id": trophy_id
                 }
         
         # Если не найден по полному имени, ищем по частичному совпадению
         for trophy_id, trophy_info in trophies_data.items():
             name = trophy_info.get('name', trophy_id)
-            if name == trophy_name:
+            if name == trophy_identifier:
                 emoji = trophy_info.get('emoji', '🏆')
                 return {
                     "name": name,
@@ -814,7 +873,7 @@ async def get_user_info(user_id: int):
 @app.post("/api/trophies.submit")
 async def submit_trophy_application(
     user_id: int = Depends(get_current_user),
-    trophy_name: str = Form(...),
+    trophy_id: str = Form(...),
     comment: str = Form(""),
     photos: List[UploadFile] = File(...)
 ):
@@ -836,11 +895,11 @@ async def submit_trophy_application(
             detail="PSN ID не указан в профиле"
         )
     
-    # Валидация trophy_name
-    if not trophy_name or not trophy_name.strip():
+    # Валидация trophy_id
+    if not trophy_id or not trophy_id.strip():
         raise HTTPException(
             status_code=400,
-            detail="Имя трофея обязательно"
+            detail="ID трофея обязательно"
         )
     
     # Валидация количества фото
@@ -864,23 +923,27 @@ async def submit_trophy_application(
                 detail="Разрешены только изображения"
             )
     
-    # Получаем trophy_id для файловой системы из имени трофея
-    trophy_id = None
+    # Получаем данные трофея по trophy_id
+    trophy_name = None
     try:
-        trophies_data = load_trophies_data()
-        for tid, trophy_info in trophies_data.items():
-            name = trophy_info.get('name', tid)
-            emoji = trophy_info.get('emoji', '🏆')
-            full_name = f"{name} {emoji}"
-            if full_name == trophy_name:
-                trophy_id = tid
-                break
+        # Преобразуем trophy_id в число
+        trophy_id_int = int(trophy_id)
         
-        if not trophy_id:
+        # Получаем данные трофея из БД
+        trophy_data = get_trophy_by_id(DB_PATH, trophy_id_int)
+        if not trophy_data:
             raise HTTPException(
                 status_code=400,
                 detail="Трофей не найден"
             )
+        
+        trophy_name = trophy_data[1]  # trophy_name из БД
+        
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Неверный формат ID трофея"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -955,16 +1018,16 @@ async def submit_trophy_application(
     if comment.strip():
         message_text += f"\n💬 <b>Комментарий:</b>\n{comment.strip()}"
     
-    # Создаем inline кнопки
+    # Создаем inline кнопки (используем trophy_id для callback_data)
     reply_markup = {
         "inline_keyboard": [[
             {
                 "text": "✅ Одобрить",
-                "callback_data": f"trophy_approve:{user_id}:{trophy_name}"
+                "callback_data": f"trophy_approve:{user_id}:{trophy_id}"
             },
             {
                 "text": "❌ Отклонить", 
-                "callback_data": f"trophy_reject:{user_id}:{trophy_name}"
+                "callback_data": f"trophy_reject:{user_id}:{trophy_id}"
             }
         ]]
     }

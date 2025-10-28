@@ -41,6 +41,21 @@ def init_db(db_path: str) -> None:
         CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)
     ''')
     
+    # Создаем таблицу trophies
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS trophies (
+            trophy_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trophy_name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            created_at INTEGER
+        )
+    ''')
+    
+    # Создаем индекс для быстрого поиска по названию трофея
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_trophies_name ON trophies(trophy_name)
+    ''')
+    
     # Создаем таблицу builds
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS builds (
@@ -107,7 +122,7 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
         'modes': [m.strip() for m in row[4].split(',') if m.strip()] if row[4] else [],
         'goals': [g.strip() for g in row[5].split(',') if g.strip()] if row[5] else [],
         'difficulties': [d.strip() for d in row[6].split(',') if d.strip()] if row[6] else [],
-        'trophies': [t.strip() for t in row[7].split(',') if t.strip()] if row[7] and row[7] != '[]' else [],
+        'trophies': [t.strip() for t in row[7].split(',') if t.strip()] if row[7] else [],  # Массив названий трофеев
         'updated_at': row[8]
     }
     
@@ -624,5 +639,165 @@ def get_all_users(db_path: str) -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"Ошибка получения списка пользователей: {e}")
         return []
+
+
+# Функции для работы с трофеями
+
+def sync_trophies_from_json(db_path: str, json_path: str) -> None:
+    """
+    Синхронизирует трофеи из JSON файла с базой данных.
+    
+    Args:
+        db_path: Путь к файлу базы данных SQLite
+        json_path: Путь к JSON файлу с трофеями
+    """
+    try:
+        if not os.path.exists(json_path):
+            print(f"JSON файл не найден: {json_path}")
+            return
+        
+        # Читаем JSON файл
+        with open(json_path, 'r', encoding='utf-8') as f:
+            trophies_data = json.load(f)
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        current_time = int(time.time())
+        
+        for trophy_data in trophies_data:
+            trophy_name = trophy_data.get('name', '')
+            description = trophy_data.get('description', '')
+            
+            if not trophy_name:
+                continue
+            
+            # Проверяем, существует ли трофей
+            cursor.execute('SELECT trophy_id FROM trophies WHERE trophy_name = ?', (trophy_name,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Обновляем описание существующего трофея
+                cursor.execute('''
+                    UPDATE trophies 
+                    SET description = ? 
+                    WHERE trophy_name = ?
+                ''', (description, trophy_name))
+                print(f"Обновлен трофей: {trophy_name}")
+            else:
+                # Добавляем новый трофей
+                cursor.execute('''
+                    INSERT INTO trophies (trophy_name, description, created_at)
+                    VALUES (?, ?, ?)
+                ''', (trophy_name, description, current_time))
+                print(f"Добавлен новый трофей: {trophy_name}")
+        
+        conn.commit()
+        conn.close()
+        print("Синхронизация трофеев завершена")
+        
+    except Exception as e:
+        print(f"Ошибка синхронизации трофеев: {e}")
+
+
+def get_all_trophies(db_path: str) -> List[tuple]:
+    """
+    Получает все трофеи из базы данных.
+    
+    Args:
+        db_path: Путь к файлу базы данных SQLite
+        
+    Returns:
+        Список кортежей (trophy_id, trophy_name, description)
+    """
+    try:
+        if not os.path.exists(db_path):
+            return []
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT trophy_id, trophy_name, description
+            FROM trophies
+            ORDER BY trophy_id
+        ''')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return rows
+        
+    except Exception as e:
+        print(f"Ошибка получения трофеев: {e}")
+        return []
+
+
+def get_trophy_by_id(db_path: str, trophy_id: int) -> Optional[tuple]:
+    """
+    Получает трофей по ID.
+    
+    Args:
+        db_path: Путь к файлу базы данных SQLite
+        trophy_id: ID трофея
+        
+    Returns:
+        Кортеж (trophy_id, trophy_name, description) или None
+    """
+    try:
+        if not os.path.exists(db_path):
+            return None
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT trophy_id, trophy_name, description
+            FROM trophies
+            WHERE trophy_id = ?
+        ''', (trophy_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        return row
+        
+    except Exception as e:
+        print(f"Ошибка получения трофея по ID: {e}")
+        return None
+
+
+def get_trophy_by_name(db_path: str, trophy_name: str) -> Optional[tuple]:
+    """
+    Получает трофей по названию.
+    
+    Args:
+        db_path: Путь к файлу базы данных SQLite
+        trophy_name: Название трофея
+        
+    Returns:
+        Кортеж (trophy_id, trophy_name, description) или None
+    """
+    try:
+        if not os.path.exists(db_path):
+            return None
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT trophy_id, trophy_name, description
+            FROM trophies
+            WHERE trophy_name = ?
+        ''', (trophy_name,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        return row
+        
+    except Exception as e:
+        print(f"Ошибка получения трофея по названию: {e}")
+        return None
 
 
