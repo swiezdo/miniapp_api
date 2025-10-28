@@ -692,6 +692,16 @@ def sync_trophies_from_json(db_path: str, json_path: str) -> None:
                 ''', (trophy_name, description, current_time))
                 print(f"Добавлен новый трофей: {trophy_name}")
         
+        # Удаляем трофеи, которых нет в JSON
+        json_trophy_names = {trophy_data.get('name', '') for trophy_data in trophies_data if trophy_data.get('name')}
+        cursor.execute('SELECT trophy_id, trophy_name FROM trophies')
+        db_trophies = cursor.fetchall()
+        
+        for trophy_id, trophy_name in db_trophies:
+            if trophy_name not in json_trophy_names:
+                cursor.execute('DELETE FROM trophies WHERE trophy_id = ?', (trophy_id,))
+                print(f"Удален трофей: {trophy_name}")
+        
         conn.commit()
         conn.close()
         print("Синхронизация трофеев завершена")
