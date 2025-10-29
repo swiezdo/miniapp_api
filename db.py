@@ -461,6 +461,113 @@ def get_public_builds(db_path: str) -> List[Dict[str, Any]]:
         return []
 
 
+def search_builds(db_path: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Ищет публичные билды по названию, описанию, тегам, классу, автору или ID.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        query: Поисковый запрос (текст или число для поиска по ID)
+        limit: Максимальное количество результатов
+    
+    Returns:
+        Список словарей с данными билдов (только публичные, is_public = 1)
+    """
+    try:
+        if not os.path.exists(db_path):
+            return []
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Проверяем, является ли запрос числом (поиск по ID)
+        try:
+            build_id = int(query.strip())
+            # Если это число, ищем по ID
+            cursor.execute('''
+                SELECT build_id, user_id, author, name, class, tags, description, 
+                       photo_1, photo_2, created_at, is_public
+                FROM builds 
+                WHERE build_id = ? AND is_public = 1
+                LIMIT ?
+            ''', (build_id, limit))
+        except ValueError:
+            # Если не число, ищем по текстовым полям
+            # Получаем ВСЕ публичные билды и фильтруем на стороне Python
+            # Это гарантирует корректную работу с кириллицей
+            cursor.execute('''
+                SELECT build_id, user_id, author, name, class, tags, description, 
+                       photo_1, photo_2, created_at, is_public
+                FROM builds 
+                WHERE is_public = 1
+                ORDER BY created_at DESC
+            ''')
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            # Фильтруем результаты на стороне Python
+            query_lower = query.lower().strip()
+            builds_with_priority = []
+            
+            for row in rows:
+                build = {
+                    'build_id': row[0],
+                    'user_id': row[1],
+                    'author': row[2],
+                    'name': row[3],
+                    'class': row[4],
+                    'tags': [t.strip() for t in row[5].split(',') if t.strip()] if row[5] else [],
+                    'description': row[6] or '',
+                    'photo_1': row[7],
+                    'photo_2': row[8],
+                    'created_at': row[9],
+                    'is_public': row[10]
+                }
+                
+                # Проверяем совпадения без учета регистра
+                name_lower = build['name'].lower()
+                class_lower = build['class'].lower()
+                author_lower = build['author'].lower()
+                description_lower = build['description'].lower()
+                tags_lower = ', '.join([t.lower() for t in build['tags']])
+                
+                # Определяем приоритет совпадения
+                priority = None
+                if query_lower in name_lower:
+                    priority = 1
+                elif query_lower in class_lower:
+                    priority = 2
+                elif query_lower in tags_lower:
+                    priority = 3
+                elif query_lower in author_lower:
+                    priority = 4
+                elif query_lower in description_lower:
+                    priority = 5
+                
+                # Если есть совпадение, добавляем в список
+                if priority is not None:
+                    build['_priority'] = priority
+                    builds_with_priority.append(build)
+            
+            # Сортируем по приоритету и дате создания
+            builds_with_priority.sort(key=lambda x: (x['_priority'], -x['created_at']))
+            
+            # Берем только нужное количество
+            builds = [b for b in builds_with_priority[:limit]]
+            
+            # Удаляем временное поле _priority
+            for build in builds:
+                if '_priority' in build:
+                    del build['_priority']
+            
+            return builds
+        
+    except Exception as e:
+        print(f"Ошибка поиска билдов: {e}")
+        return []
+
+
 def update_build_visibility(db_path: str, build_id: int, user_id: int, is_public: int) -> bool:
     """
     Изменяет видимость билда (публичный/приватный).

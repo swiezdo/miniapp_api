@@ -691,6 +691,27 @@ async def get_public_builds_endpoint():
         "builds": builds
     }
 
+@app.get("/api/builds.search")
+async def search_builds_endpoint(query: str, limit: int = 10):
+    """
+    Поиск публичных билдов по названию, описанию, тегам, классу, автору или ID.
+    
+    Args:
+        query: Поисковый запрос (текст или число для поиска по ID)
+        limit: Максимальное количество результатов (по умолчанию 10)
+    
+    Returns:
+        JSON со списком найденных публичных билдов
+    """
+    from db import search_builds as db_search_builds
+    
+    builds = db_search_builds(DB_PATH, query, limit)
+    return {
+        "status": "ok",
+        "builds": builds
+    }
+
+
 @app.get("/api/builds.get/{build_id}")
 async def get_build_by_id_endpoint(build_id: int):
     """Получить билд по ID"""
