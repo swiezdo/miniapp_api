@@ -491,6 +491,24 @@ def search_builds(db_path: str, query: str, limit: int = 10) -> List[Dict[str, A
                 WHERE build_id = ? AND is_public = 1
                 LIMIT ?
             ''', (build_id, limit))
+            rows = cursor.fetchall()
+            conn.close()
+            builds = []
+            for row in rows:
+                builds.append({
+                    'build_id': row[0],
+                    'user_id': row[1],
+                    'author': row[2],
+                    'name': row[3],
+                    'class': row[4],
+                    'tags': [t.strip() for t in row[5].split(',') if t.strip()] if row[5] else [],
+                    'description': row[6],
+                    'photo_1': row[7],
+                    'photo_2': row[8],
+                    'created_at': row[9],
+                    'is_public': row[10]
+                })
+            return builds
         except ValueError:
             # Если не число, ищем по текстовым полям
             # Получаем ВСЕ публичные билды и фильтруем на стороне Python
