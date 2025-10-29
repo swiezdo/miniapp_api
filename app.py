@@ -8,6 +8,7 @@ import shutil
 import json
 import time
 import requests
+import tempfile
 from fastapi import FastAPI, HTTPException, Depends, Header, Form, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -1270,6 +1271,150 @@ async def approve_trophy_application(
     return {
         "status": "ok",
         "message": "Трофей успешно одобрен"
+    }
+
+
+@app.post("/api/feedback.submit")
+async def submit_feedback(
+    user_id: int = Depends(get_current_user),
+    description: str = Form(...),
+    photos: Optional[List[UploadFile]] = File(default=None)
+):
+    """
+    Отправляет отзыв/баг-репорт в админскую группу.
+    """
+    # Получаем профиль пользователя для получения psn_id
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(
+            status_code=404,
+            detail="Профиль пользователя не найден"
+        )
+    
+    psn_id = user_profile.get('psn_id', '')
+    if not psn_id:
+        raise HTTPException(
+            status_code=400,
+            detail="PSN ID не указан в профиле"
+        )
+    
+    # Валидация описания
+    if not description or not description.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Описание обязательно"
+        )
+    
+    # Валидация количества фото
+    if photos and len(photos) > 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Можно прикрепить не более 10 изображений"
+        )
+    
+    # Проверяем что все файлы - изображения
+    if photos:
+        for photo in photos:
+            if not photo.content_type or not photo.content_type.startswith('image/'):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Разрешены только изображения"
+                )
+    
+    # Создаем временную директорию для фотографий
+    temp_dir = None
+    photo_paths = []
+    
+    try:
+        if photos and len(photos) > 0:
+            temp_dir = tempfile.mkdtemp(prefix='feedback_')
+            
+            # Обрабатываем и сохраняем изображения
+            for i, photo in enumerate(photos):
+                photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
+                
+                # Открываем изображение через Pillow
+                image = Image.open(photo.file)
+                
+                # Исправляем ориентацию согласно EXIF-метаданным
+                image = ImageOps.exif_transpose(image)
+                
+                # Конвертируем в RGB если нужно
+                if image.mode in ('RGBA', 'LA', 'P'):
+                    background = Image.new('RGB', image.size, (255, 255, 255))
+                    if image.mode == 'P':
+                        image = image.convert('RGBA')
+                    background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
+                    image = background
+                
+                # Сохраняем как JPEG
+                image.save(photo_path, 'JPEG', quality=85, optimize=True)
+                photo_paths.append(photo_path)
+                
+                # Возвращаем курсор файла
+                photo.file.seek(0)
+    
+    except Exception as e:
+        # Удаляем временную директорию при ошибке
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка обработки изображений: {str(e)}"
+        )
+    
+    # Формируем сообщение для группы
+    message_text = f"""💬 <b>Новый отзыв/баг-репорт</b>
+
+👤 <b>Пользователь:</b> {psn_id}
+
+💬 <b>Описание:</b>
+{description.strip()}
+"""
+    
+    # Отправляем уведомление в группу БЕЗ message_thread_id (в основную тему)
+    try:
+        if len(photo_paths) == 1:
+            # Одна фотография - отправляем как фото с подписью
+            await send_telegram_photo(
+                chat_id=TROPHY_GROUP_CHAT_ID,
+                photo_path=photo_paths[0],
+                caption=message_text
+            )
+        elif len(photo_paths) > 1:
+            # Несколько фотографий - сначала текст, потом медиагруппа
+            await send_telegram_message(
+                chat_id=TROPHY_GROUP_CHAT_ID,
+                text=message_text
+            )
+            
+            # Затем отправляем медиагруппу с фото
+            await send_telegram_media_group(
+                chat_id=TROPHY_GROUP_CHAT_ID,
+                photo_paths=photo_paths
+            )
+        else:
+            # Нет фотографий - только текстовое сообщение
+            await send_telegram_message(
+                chat_id=TROPHY_GROUP_CHAT_ID,
+                text=message_text
+            )
+    
+    except Exception as e:
+        print(f"Ошибка отправки отзыва в группу: {e}")
+        # Не прерываем выполнение, но логируем ошибку
+    
+    finally:
+        # Удаляем временную директорию
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as e:
+                print(f"Ошибка удаления временной директории: {e}")
+    
+    return {
+        "status": "ok",
+        "message": "Отзыв успешно отправлен"
     }
 
 
