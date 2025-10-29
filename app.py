@@ -19,7 +19,7 @@ import re
 
 # Импортируем наши модули
 from security import validate_init_data, get_user_id_from_init_data
-from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, add_trophy_to_user, get_all_users, sync_trophies_from_json, get_all_trophies, get_trophy_by_id, get_trophy_by_name
+from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, add_trophy_to_user, get_all_users, sync_trophies_from_json, get_all_trophies, get_trophy_by_id, get_trophy_by_name
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -793,6 +793,153 @@ async def delete_build_endpoint(
     return {
         "status": "ok",
         "message": "Билд успешно удален"
+    }
+
+
+@app.post("/api/builds.update")
+async def update_build_endpoint(
+    user_id: int = Depends(get_current_user),
+    build_id: int = Form(...),
+    name: str = Form(...),
+    class_name: str = Form(...),
+    tags: str = Form(...),  # JSON строка
+    description: str = Form(""),
+    photo_1: Optional[UploadFile] = File(None),
+    photo_2: Optional[UploadFile] = File(None)
+):
+    """
+    Обновляет существующий билд.
+    """
+    print(f"🔧 Обновление билда {build_id}, пользователь {user_id}")
+    print(f"📋 Полученные параметры: name={name[:20]}..., class={class_name}, photo_1={photo_1 is not None}, photo_2={photo_2 is not None}")
+    
+    # Проверяем что билд существует и принадлежит пользователю
+    build = get_build(DB_PATH, build_id)
+    if not build:
+        raise HTTPException(
+            status_code=404,
+            detail="Билд не найден"
+        )
+    
+    if build['user_id'] != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="У вас нет прав на изменение этого билда"
+        )
+    
+    # Валидация данных
+    if not name or not name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Название билда обязательно"
+        )
+    
+    if not class_name or not class_name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Класс обязателен"
+        )
+    
+    # Парсим теги
+    try:
+        import json
+        if tags.startswith('[') and tags.endswith(']'):
+            tags_list = json.loads(tags)
+        else:
+            tags_list = [t.strip() for t in tags.split(',') if t.strip()]
+    except:
+        tags_list = [t.strip() for t in tags.split(',') if t.strip()] if tags else []
+    
+    # Подготавливаем данные для обновления
+    build_data = {
+        'name': name.strip(),
+        'class': class_name.strip(),
+        'tags': tags_list,
+        'description': description.strip()
+    }
+    
+    # Обрабатываем изображения только если они переданы
+    builds_dir = os.path.join(os.path.dirname(DB_PATH), 'builds', str(build_id))
+    os.makedirs(builds_dir, exist_ok=True)
+    
+    # Проверяем наличие файлов
+    if photo_1:
+        try:
+            # Читаем содержимое файла для проверки
+            photo_1.file.seek(0)
+            file_content = photo_1.file.read()
+            photo_1.file.seek(0)
+            
+            if len(file_content) > 0:
+                photo_1_path = os.path.join(builds_dir, 'photo_1.jpg')
+                image1 = Image.open(photo_1.file)
+                image1 = ImageOps.exif_transpose(image1)
+                if image1.mode in ('RGBA', 'LA', 'P'):
+                    background = Image.new('RGB', image1.size, (255, 255, 255))
+                    if image1.mode == 'P':
+                        image1 = image1.convert('RGBA')
+                    background.paste(image1, mask=image1.split()[-1] if image1.mode == 'RGBA' else None)
+                    image1 = background
+                image1.save(photo_1_path, 'JPEG', quality=85, optimize=True)
+                build_data['photo_1'] = f"/builds/{build_id}/photo_1.jpg"
+                print(f"✅ Обновлено фото 1 для билда {build_id}, размер: {len(file_content)} байт")
+            else:
+                print(f"⚠️ Фото 1 пустое для билда {build_id}")
+        except Exception as e:
+            print(f"❌ Ошибка обработки первого изображения для билда {build_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Ошибка обработки первого изображения: {str(e)}"
+            )
+    
+    if photo_2:
+        try:
+            # Читаем содержимое файла для проверки
+            photo_2.file.seek(0)
+            file_content = photo_2.file.read()
+            photo_2.file.seek(0)
+            
+            if len(file_content) > 0:
+                photo_2_path = os.path.join(builds_dir, 'photo_2.jpg')
+                image2 = Image.open(photo_2.file)
+                image2 = ImageOps.exif_transpose(image2)
+                if image2.mode in ('RGBA', 'LA', 'P'):
+                    background = Image.new('RGB', image2.size, (255, 255, 255))
+                    if image2.mode == 'P':
+                        image2 = image2.convert('RGBA')
+                    background.paste(image2, mask=image2.split()[-1] if image2.mode == 'RGBA' else None)
+                    image2 = background
+                image2.save(photo_2_path, 'JPEG', quality=85, optimize=True)
+                build_data['photo_2'] = f"/builds/{build_id}/photo_2.jpg"
+                print(f"✅ Обновлено фото 2 для билда {build_id}, размер: {len(file_content)} байт")
+            else:
+                print(f"⚠️ Фото 2 пустое для билда {build_id}")
+        except Exception as e:
+            print(f"❌ Ошибка обработки второго изображения для билда {build_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Ошибка обработки второго изображения: {str(e)}"
+            )
+    
+    print(f"📝 Данные для обновления билда {build_id}: {list(build_data.keys())}")
+    
+    # Обновляем билд в БД
+    success = update_build(DB_PATH, build_id, user_id, build_data)
+    
+    if not success:
+        raise HTTPException(
+            status_code=500,
+            detail="Ошибка обновления билда"
+        )
+    
+    return {
+        "status": "ok",
+        "message": "Билд успешно обновлен",
+        "build_id": build_id
     }
 
 

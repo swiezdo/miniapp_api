@@ -498,6 +498,88 @@ def update_build_visibility(db_path: str, build_id: int, user_id: int, is_public
         return False
 
 
+def update_build(db_path: str, build_id: int, user_id: int, build_data: Dict[str, Any]) -> bool:
+    """
+    Обновляет существующий билд.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        build_id: ID билда
+        user_id: ID пользователя (для проверки прав)
+        build_data: Словарь с данными билда (name, class, tags, description, photo_1, photo_2)
+    
+    Returns:
+        True при успешном обновлении, иначе False
+    """
+    try:
+        if not os.path.exists(db_path):
+            return False
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Проверяем, что билд существует и принадлежит пользователю
+        cursor.execute('SELECT build_id FROM builds WHERE build_id = ? AND user_id = ?', (build_id, user_id))
+        if not cursor.fetchone():
+            conn.close()
+            return False
+        
+        # Подготавливаем данные для обновления
+        tags_str = ','.join(build_data.get('tags', []))
+        
+        # Обновляем только переданные поля (если photo не переданы, они остаются старыми)
+        update_fields = []
+        update_values = []
+        
+        if 'name' in build_data:
+            update_fields.append('name = ?')
+            update_values.append(build_data['name'])
+        
+        if 'class' in build_data:
+            update_fields.append('class = ?')
+            update_values.append(build_data['class'])
+        
+        if 'tags' in build_data:
+            update_fields.append('tags = ?')
+            update_values.append(tags_str)
+        
+        if 'description' in build_data:
+            update_fields.append('description = ?')
+            update_values.append(build_data.get('description', ''))
+        
+        if 'photo_1' in build_data:
+            update_fields.append('photo_1 = ?')
+            update_values.append(build_data['photo_1'])
+        
+        if 'photo_2' in build_data:
+            update_fields.append('photo_2 = ?')
+            update_values.append(build_data['photo_2'])
+        
+        if not update_fields:
+            conn.close()
+            return False
+        
+        # Добавляем build_id и user_id в конец для WHERE
+        update_values.extend([build_id, user_id])
+        
+        sql = f'''
+            UPDATE builds 
+            SET {', '.join(update_fields)}
+            WHERE build_id = ? AND user_id = ?
+        '''
+        
+        cursor.execute(sql, update_values)
+        success = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        
+        return success
+        
+    except Exception as e:
+        print(f"Ошибка обновления билда: {e}")
+        return False
+
+
 def delete_build(db_path: str, build_id: int, user_id: int) -> bool:
     """
     Удаляет билд из базы данных.
