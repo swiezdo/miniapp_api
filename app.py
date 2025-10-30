@@ -20,7 +20,7 @@ import re
 
 # Импортируем наши модули
 from security import validate_init_data, get_user_id_from_init_data
-from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, add_trophy_to_user, get_all_users, sync_trophies_from_json, get_all_trophies, get_trophy_by_id, get_trophy_by_name
+from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -37,48 +37,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN")
 DB_PATH = os.getenv("DB_PATH", "/home/ubuntu/miniapp_api/app.db")
 
-# Переменные для системы трофеев
+# Параметры для отправки уведомлений/сообщений
 TROPHY_GROUP_CHAT_ID = os.getenv("TROPHY_GROUP_CHAT_ID", "-1002348168326")
 TROPHY_GROUP_TOPIC_ID = os.getenv("TROPHY_GROUP_TOPIC_ID", "5675")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "swiezdo_testbot")
 
-# Кеш для данных трофеев
-_trophies_cache: Dict[str, Any] = {}
-_trophies_cache_time: float = 0
-CACHE_TTL = 3600  # 1 час
-
-def load_trophies_data() -> Dict[str, Any]:
-    """
-    Загружает данные трофеев с фронтенда с кешированием.
-    """
-    global _trophies_cache, _trophies_cache_time
-    
-    current_time = time.time()
-    
-    # Проверяем кеш
-    if _trophies_cache and (current_time - _trophies_cache_time) < CACHE_TTL:
-        return _trophies_cache
-    
-    # Загружаем с фронтенда
-    try:
-        frontend_url = os.getenv('FRONTEND_URL', ALLOWED_ORIGIN)
-        trophies_url = f"{frontend_url}/docs/assets/data/trophies.json"
-        
-        response = requests.get(trophies_url, timeout=10)
-        response.raise_for_status()
-        
-        _trophies_cache = response.json()
-        _trophies_cache_time = current_time
-        
-        return _trophies_cache
-    except Exception as e:
-        print(f"Ошибка загрузки данных трофея с URL: {e}")
-        
-        # Если есть старый кеш, используем его
-        if _trophies_cache:
-            return _trophies_cache
-        
-        raise HTTPException(status_code=500, detail="Не удалось загрузить данные трофеев")
+# Удалены кеш и загрузка данных трофеев
 
 # Функции для работы с Telegram Bot API
 async def send_telegram_message(chat_id: str, text: str, reply_markup: dict = None, message_thread_id: str = None):
@@ -190,18 +154,7 @@ app.add_middleware(
 # Инициализируем базу данных при запуске
 init_db(DB_PATH)
 
-# Синхронизируем трофеи из JSON при запуске
-@app.on_event("startup")
-async def startup_event():
-    """
-    Синхронизация трофеев из JSON файла при запуске приложения.
-    """
-    try:
-        trophies_json_path = os.path.join(os.path.dirname(__file__), 'trophies.json')
-        sync_trophies_from_json(DB_PATH, trophies_json_path)
-        print("✅ Синхронизация трофеев завершена")
-    except Exception as e:
-        print(f"❌ Ошибка синхронизации трофеев: {e}")
+# Удалена синхронизация трофеев при запуске
 
 # Глобальный обработчик OPTIONS запросов
 @app.options("/{path:path}")
@@ -286,41 +239,10 @@ async def health_check():
     return {"status": "ok", "message": "Tsushima Mini App API работает"}
 
 
-@app.get("/api/trophies.list")
-async def get_trophies_list():
-    """
-    Получает список всех трофеев.
-    """
-    try:
-        trophies = get_all_trophies(DB_PATH)
-        return [{
-            "trophy_id": trophy[0],
-            "trophy_name": trophy[1],
-            "description": trophy[2]
-        } for trophy in trophies]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка получения трофеев: {str(e)}")
+# Эндпоинты трофеев удалены
 
 
-@app.get("/api/trophies.getById/{trophy_id}")
-async def get_trophy_by_id_endpoint(trophy_id: int):
-    """
-    Получает трофей по ID.
-    """
-    try:
-        trophy = get_trophy_by_id(DB_PATH, trophy_id)
-        if not trophy:
-            raise HTTPException(status_code=404, detail="Трофей не найден")
-        
-        return {
-            "trophy_id": trophy[0],
-            "trophy_name": trophy[1],
-            "description": trophy[2]
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка получения трофея: {str(e)}")
+
 
 
 @app.options("/api/profile.get")
@@ -385,8 +307,7 @@ async def get_profile(user_id: int = Depends(get_current_user)):
         "platforms": profile.get("platforms", []),
         "modes": profile.get("modes", []),
         "goals": profile.get("goals", []),
-        "difficulties": profile.get("difficulties", []),
-        "trophies": profile.get("trophies", [])
+        "difficulties": profile.get("difficulties", [])
     }
     
     return response_data
@@ -498,8 +419,7 @@ async def get_user_profile(
         "platforms": profile.get("platforms", []),
         "modes": profile.get("modes", []),
         "goals": profile.get("goals", []),
-        "difficulties": profile.get("difficulties", []),
-        "trophies": profile.get("trophies", [])
+        "difficulties": profile.get("difficulties", [])
     }
     
     return response_data
@@ -981,50 +901,7 @@ async def get_build_photo(build_id: int, photo_name: str):
     return FileResponse(photo_path, media_type='image/jpeg')
 
 
-@app.get("/api/trophy_info/{trophy_identifier}")
-async def get_trophy_info(trophy_identifier: str):
-    """Получает информацию о трофее по ID или имени"""
-    try:
-        trophies_data = load_trophies_data()
-        
-        # Сначала ищем по trophy_id (например, "trophy1")
-        if trophy_identifier in trophies_data:
-            trophy_info = trophies_data[trophy_identifier]
-            return {
-                "name": trophy_info.get('name', trophy_identifier),
-                "emoji": trophy_info.get('emoji', '🏆'),
-                "trophy_id": trophy_identifier
-            }
-        
-        # Если не найден по ID, ищем по полному имени (например, "Легенда Цусимы 🗡️")
-        for trophy_id, trophy_info in trophies_data.items():
-            name = trophy_info.get('name', trophy_id)
-            emoji = trophy_info.get('emoji', '🏆')
-            full_name = f"{name} {emoji}"
-            
-            if full_name == trophy_identifier:
-                return {
-                    "name": name,
-                    "emoji": emoji,
-                    "trophy_id": trophy_id
-                }
-        
-        # Если не найден по полному имени, ищем по частичному совпадению
-        for trophy_id, trophy_info in trophies_data.items():
-            name = trophy_info.get('name', trophy_id)
-            if name == trophy_identifier:
-                emoji = trophy_info.get('emoji', '🏆')
-                return {
-                    "name": name,
-                    "emoji": emoji,
-                    "trophy_id": trophy_id
-                }
-        
-        # Если не найден, возвращаем ошибку
-        raise HTTPException(status_code=404, detail="Trophy not found")
-        
-    except Exception as e:
-        raise HTTPException(status_code=404, detail="Trophy not found")
+    # Удалён функционал информации о трофеях
 
 @app.get("/api/user_info/{user_id}")
 async def get_user_info(user_id: int):
@@ -1039,260 +916,10 @@ async def get_user_info(user_id: int):
 
 # ========== API ЭНДПОИНТЫ ДЛЯ ТРОФЕЕВ ==========
 
-@app.post("/api/trophies.submit")
-async def submit_trophy_application(
-    user_id: int = Depends(get_current_user),
-    trophy_id: str = Form(...),
-    comment: str = Form(""),
-    photos: List[UploadFile] = File(...)
-):
-    """
-    Отправляет заявку на получение трофея.
-    """
-    # Получаем профиль пользователя для получения psn_id
-    user_profile = get_user(DB_PATH, user_id)
-    if not user_profile:
-        raise HTTPException(
-            status_code=404,
-            detail="Профиль пользователя не найден"
-        )
-    
-    psn_id = user_profile.get('psn_id', '')
-    if not psn_id:
-        raise HTTPException(
-            status_code=400,
-            detail="PSN ID не указан в профиле"
-        )
-    
-    # Валидация trophy_id
-    if not trophy_id or not trophy_id.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="ID трофея обязательно"
-        )
-    
-    # Валидация количества фото
-    if not photos or len(photos) == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Необходимо прикрепить хотя бы одно изображение"
-        )
-    
-    if len(photos) > 10:
-        raise HTTPException(
-            status_code=400,
-            detail="Можно прикрепить не более 10 изображений"
-        )
-    
-    # Проверяем что все файлы - изображения
-    for photo in photos:
-        if not photo.content_type or not photo.content_type.startswith('image/'):
-            raise HTTPException(
-                status_code=400,
-                detail="Разрешены только изображения"
-            )
-    
-    # Получаем данные трофея по trophy_id
-    trophy_name = None
-    try:
-        # Преобразуем trophy_id в число
-        trophy_id_int = int(trophy_id)
-        
-        # Получаем данные трофея из БД
-        trophy_data = get_trophy_by_id(DB_PATH, trophy_id_int)
-        if not trophy_data:
-            raise HTTPException(
-                status_code=400,
-                detail="Трофей не найден"
-            )
-        
-        trophy_name = trophy_data[1]  # trophy_name из БД
-        
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Неверный формат ID трофея"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail="Ошибка поиска трофея"
-        )
-    
-    # Создаем директорию для заявки (используем trophy_id для файловой системы)
-    trophies_dir = os.path.join(os.path.dirname(DB_PATH), 'trophies', str(user_id), trophy_id)
-    os.makedirs(trophies_dir, exist_ok=True)
-    
-    # Обрабатываем и сохраняем изображения
-    photo_paths = []
-    try:
-        for i, photo in enumerate(photos):
-            photo_path = os.path.join(trophies_dir, f'photo_{i+1}.jpg')
-            
-            # Открываем изображение через Pillow
-            image = Image.open(photo.file)
-            
-            # Исправляем ориентацию согласно EXIF-метаданным
-            image = ImageOps.exif_transpose(image)
-            
-            # Конвертируем в RGB если нужно
-            if image.mode in ('RGBA', 'LA', 'P'):
-                background = Image.new('RGB', image.size, (255, 255, 255))
-                if image.mode == 'P':
-                    image = image.convert('RGBA')
-                background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
-                image = background
-            
-            # Сохраняем как JPEG
-            image.save(photo_path, 'JPEG', quality=85, optimize=True)
-            photo_paths.append(photo_path)
-            
-            # Возвращаем курсор файла
-            photo.file.seek(0)
-    
-    except Exception as e:
-        # Удаляем папку при ошибке
-        if os.path.exists(trophies_dir):
-            shutil.rmtree(trophies_dir)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ошибка обработки изображений: {str(e)}"
-        )
-    
-    # Формируем сообщение для группы
-    message_text = f"""🏆 <b>Новая заявка на трофей</b>
-
-👤 <b>Пользователь:</b> {psn_id}
-🏆 <b>Трофей:</b> {trophy_name}
-
-"""
-    
-    if comment.strip():
-        message_text += f"💬 <b>Комментарий:</b>\n{comment.strip()}\n"
-    
-    # Создаем inline кнопки (используем trophy_id для callback_data)
-    reply_markup = {
-        "inline_keyboard": [[
-            {
-                "text": "✅ Одобрить",
-                "callback_data": f"trophy_approve:{user_id}:{trophy_id}"
-            },
-            {
-                "text": "❌ Отклонить", 
-                "callback_data": f"trophy_reject:{user_id}:{trophy_id}"
-            }
-        ]]
-    }
-    
-    # Отправляем уведомление в группу
-    try:
-        if len(photo_paths) == 1:
-            # Одна фотография - отправляем как фото с подписью
-            await send_telegram_photo(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                photo_path=photo_paths[0],
-                caption=message_text,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID
-            )
-            
-            # Отправляем отдельное сообщение с кнопками
-            await send_telegram_message(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                text=f"Заявка от {psn_id} на трофей {trophy_name}",
-                reply_markup=reply_markup,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID
-            )
-        else:
-            # Отправляем сначала текстовое сообщение с полным описанием
-            await send_telegram_message(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                text=message_text,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID
-            )
-            
-            # Затем отправляем медиагруппу с фото
-            await send_telegram_media_group(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                photo_paths=photo_paths,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID
-            )
-            
-            # И отдельное сообщение с кнопками
-            await send_telegram_message(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                text=f"Заявка от {psn_id} на трофей {trophy_name}",
-                reply_markup=reply_markup,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID
-            )
-    
-    except Exception as e:
-        print(f"Ошибка отправки уведомления в группу: {e}")
-        # Не прерываем выполнение, заявка уже сохранена
-    
-    return {
-        "status": "ok",
-        "message": "Заявка на трофей успешно отправлена"
-    }
+# Удалены эндпоинты отправки заявок на трофеи
 
 
-@app.post("/api/trophies.approve")
-async def approve_trophy_application(
-    user_id: int = Form(...),
-    trophy_name: str = Form(...)
-):
-    """
-    Одобряет заявку на трофей (вызывается ботом).
-    """
-    # Добавляем трофей пользователю
-    success = add_trophy_to_user(DB_PATH, user_id, trophy_name)
-    
-    if not success:
-        raise HTTPException(
-            status_code=500,
-            detail="Ошибка добавления трофея пользователю"
-        )
-    
-    # Получаем trophy_id из БД для удаления папки
-    trophy_data = get_trophy_by_name(DB_PATH, trophy_name)
-    if trophy_data:
-        trophy_id = str(trophy_data[0])  # trophy_id из БД
-        trophies_dir = os.path.join(os.path.dirname(DB_PATH), 'trophies', str(user_id), trophy_id)
-        if os.path.exists(trophies_dir):
-            try:
-                shutil.rmtree(trophies_dir)
-            except Exception as e:
-                print(f"Ошибка удаления папки заявки: {e}")
-    
-    # Отправляем уведомление пользователю
-    message_text = f"""🎉 <b>Поздравляем!</b>
-
-Вы получили трофей <b>{trophy_name}</b>
-
-Можете посмотреть его в мини-приложении Tsushima.Ru"""
-    
-    # Создаем кнопку для открытия мини-приложения
-    reply_markup = {
-        "inline_keyboard": [[
-            {
-                "text": "🏆 Открыть приложение",
-                "url": f"https://t.me/{BOT_USERNAME}?startapp=command&mode=fullscreen"
-            }
-        ]]
-    }
-    
-    try:
-        await send_telegram_message(
-            chat_id=str(user_id),
-            text=message_text,
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        print(f"Ошибка отправки уведомления пользователю: {e}")
-    
-    return {
-        "status": "ok",
-        "message": "Трофей успешно одобрен"
-    }
+# Удалён эндпоинт одобрения трофея
 
 
 @app.post("/api/feedback.submit")
@@ -1439,60 +1066,30 @@ async def submit_feedback(
     }
 
 
-@app.post("/api/trophies.reject")
-async def reject_trophy_application(
-    user_id: int = Form(...),
-    trophy_name: str = Form(...)
-):
-    """
-    Отклоняет заявку на трофей (вызывается ботом).
-    """
-    # Получаем trophy_id из БД для удаления папки
-    trophy_data = get_trophy_by_name(DB_PATH, trophy_name)
-    if trophy_data:
-        trophy_id = str(trophy_data[0])  # trophy_id из БД
-        trophies_dir = os.path.join(os.path.dirname(DB_PATH), 'trophies', str(user_id), trophy_id)
-        if os.path.exists(trophies_dir):
-            try:
-                shutil.rmtree(trophies_dir)
-            except Exception as e:
-                print(f"Ошибка удаления папки заявки: {e}")
-    
-    # Отправляем уведомление пользователю
-    message_text = f"""❌ <b>Заявка отклонена</b>
+# Удалён эндпоинт отклонения трофея
 
-Ваша заявка на трофей <b>{trophy_name}</b> была отклонена.
 
-Попробуйте подать заявку снова с более качественными доказательствами."""
+# Удалён роут изображений заявок на трофеи
+
+
+# ========== API ЭНДПОИНТЫ ДЛЯ МАСТЕРСТВА ==========
+
+@app.get("/api/mastery.get")
+async def get_mastery_levels(user_id: int = Depends(get_current_user)):
+    """
+    Получает уровни мастерства текущего пользователя.
     
+    Returns:
+        Словарь с уровнями по категориям: {"solo": 0, "hellmode": 0, "raid": 0, "speedrun": 0}
+    """
     try:
-        await send_telegram_message(
-            chat_id=str(user_id),
-            text=message_text
-        )
+        mastery = get_mastery(DB_PATH, user_id)
+        return mastery
     except Exception as e:
-        print(f"Ошибка отправки уведомления пользователю: {e}")
-    
-    return {
-        "status": "ok",
-        "message": "Заявка на трофей отклонена"
-    }
-
-
-@app.get("/trophies/{user_id}/{trophy_id}/{photo_name}")
-async def get_trophy_photo(user_id: int, trophy_id: str, photo_name: str):
-    """
-    Возвращает изображение заявки на трофей.
-    """
-    photo_path = os.path.join(os.path.dirname(DB_PATH), 'trophies', str(user_id), trophy_id, photo_name)
-    
-    if not os.path.exists(photo_path):
         raise HTTPException(
-            status_code=404,
-            detail="Изображение не найдено"
+            status_code=500,
+            detail=f"Ошибка получения уровней мастерства: {str(e)}"
         )
-    
-    return FileResponse(photo_path, media_type='image/jpeg')
 
 
 # Обработчик ошибок для CORS
