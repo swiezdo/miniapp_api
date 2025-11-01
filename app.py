@@ -3,7 +3,6 @@
 # Проверка пуша на GitHub
 
 import os
-import uvicorn
 import shutil
 import json
 import time
@@ -35,7 +34,7 @@ app = FastAPI(
 # Получаем конфигурацию из .env
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN")
-DB_PATH = os.getenv("DB_PATH", "/home/ubuntu/miniapp_api/app.db")
+DB_PATH = os.getenv("DB_PATH", "/root/miniapp_api/app.db")
 
 # Параметры для отправки уведомлений/сообщений
 TROPHY_GROUP_CHAT_ID = os.getenv("TROPHY_GROUP_CHAT_ID", "-1002348168326")
@@ -1092,6 +1091,417 @@ async def get_mastery_levels(user_id: int = Depends(get_current_user)):
         )
 
 
+# Импортируем функцию загрузки конфига из отдельного модуля
+from mastery_config import load_mastery_config
+
+
+@app.post("/api/mastery.submitApplication")
+async def submit_mastery_application(
+    user_id: int = Depends(get_current_user),
+    category_key: str = Form(...),
+    current_level: int = Form(...),
+    next_level: int = Form(...),
+    comment: Optional[str] = Form(default=None),
+    photos: Optional[List[UploadFile]] = File(default=None)
+):
+    """
+    Отправляет заявку на повышение уровня мастерства в админскую группу.
+    """
+    # Получаем профиль пользователя для получения psn_id
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(
+            status_code=404,
+            detail="Профиль пользователя не найден"
+        )
+    
+    psn_id = user_profile.get('psn_id', '')
+    if not psn_id:
+        raise HTTPException(
+            status_code=400,
+            detail="PSN ID не указан в профиле"
+        )
+    
+    # Загружаем конфиг мастерства
+    try:
+        config = load_mastery_config()
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка загрузки конфига мастерства: {str(e)}"
+        )
+    
+    # Находим категорию в конфиге
+    category = None
+    for cat in config.get('categories', []):
+        if cat.get('key') == category_key:
+            category = cat
+            break
+    
+    if not category:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Категория {category_key} не найдена в конфиге"
+        )
+    
+    max_levels = category.get('maxLevels', 0)
+    
+    # Валидация
+    if photos is None or len(photos) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Необходимо прикрепить хотя бы одно изображение"
+        )
+    
+    if len(photos) > 9:
+        raise HTTPException(
+            status_code=400,
+            detail="Можно прикрепить не более 9 изображений"
+        )
+    
+    # Проверяем что все файлы - изображения
+    for photo in photos:
+        if not photo.content_type or not photo.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=400,
+                detail="Разрешены только изображения"
+            )
+    
+    # Валидация уровней
+    if next_level != current_level + 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Следующий уровень должен быть {current_level + 1}, получен {next_level}"
+        )
+    
+    if current_level >= max_levels:
+        raise HTTPException(
+            status_code=400,
+            detail="Текущий уровень уже максимальный"
+        )
+    
+    # Получаем информацию об уровнях из конфига
+    current_level_data = None
+    next_level_data = None
+    
+    for level in category.get('levels', []):
+        if level.get('level') == current_level:
+            current_level_data = level
+        if level.get('level') == next_level:
+            next_level_data = level
+    
+    if not next_level_data:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Уровень {next_level} не найден в конфиге для категории {category_key}"
+        )
+    
+    # Создаем временную директорию для фотографий
+    temp_dir = None
+    photo_paths = []
+    
+    try:
+        temp_dir = tempfile.mkdtemp(prefix='mastery_app_')
+        
+        # Обрабатываем и сохраняем изображения
+        for i, photo in enumerate(photos):
+            photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
+            
+            # Открываем изображение через Pillow
+            image = Image.open(photo.file)
+            
+            # Исправляем ориентацию согласно EXIF-метаданным
+            image = ImageOps.exif_transpose(image)
+            
+            # Конвертируем в RGB если нужно
+            if image.mode in ('RGBA', 'LA', 'P'):
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                if image.mode == 'P':
+                    image = image.convert('RGBA')
+                background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
+                image = background
+            
+            # Сохраняем как JPEG
+            image.save(photo_path, 'JPEG', quality=85, optimize=True)
+            photo_paths.append(photo_path)
+            
+            # Возвращаем курсор файла
+            photo.file.seek(0)
+    
+    except Exception as e:
+        # Удаляем временную директорию при ошибке
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка обработки изображений: {str(e)}"
+        )
+    
+    # Формируем сообщение для группы
+    current_level_name = current_level_data.get('name', f'Уровень {current_level}') if current_level_data else f'Уровень {current_level}'
+    next_level_name = next_level_data.get('name', f'Уровень {next_level}')
+    next_level_description = next_level_data.get('description', '')
+    next_level_proof = next_level_data.get('proof', '')
+    category_name = category.get('name', category_key)
+    
+    comment_text = comment.strip() if comment and comment.strip() else "Без комментария"
+    
+    message_text = f"""🏆 <b>Заявка на повышение уровня</b>
+
+👤 <b>PSN ID:</b> {psn_id}
+📂 <b>Категория:</b> {category_name}
+📊 <b>Текущий уровень:</b> Уровень {current_level} — {current_level_name}
+⬆️ <b>Запрашиваемый уровень:</b> Уровень {next_level} — {next_level_name}
+📝 <b>Описание уровня:</b>
+{next_level_description}
+
+📸 <b>Требуемые доказательства:</b>
+{next_level_proof}
+
+💬 <b>Комментарий:</b> {comment_text}"""
+    
+    # Создаем inline кнопки
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "Одобрить",
+                    "callback_data": f"approve_mastery:{user_id}:{category_key}:{next_level}"
+                },
+                {
+                    "text": "Отклонить",
+                    "callback_data": f"reject_mastery:{user_id}:{category_key}:{next_level}"
+                }
+            ]
+        ]
+    }
+    
+    # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
+    try:
+        if len(photo_paths) == 1:
+            # Одна фотография - отправляем как фото с подписью и кнопками
+            await send_telegram_photo(
+                chat_id=TROPHY_GROUP_CHAT_ID,
+                photo_path=photo_paths[0],
+                caption=message_text,
+                reply_markup=reply_markup,
+                message_thread_id=TROPHY_GROUP_TOPIC_ID
+            )
+        else:
+            # Несколько фотографий - сначала текст с кнопками, потом медиагруппа
+            await send_telegram_message(
+                chat_id=TROPHY_GROUP_CHAT_ID,
+                text=message_text,
+                reply_markup=reply_markup,
+                message_thread_id=TROPHY_GROUP_TOPIC_ID
+            )
+            
+            # Затем отправляем медиагруппу с фото
+            await send_telegram_media_group(
+                chat_id=TROPHY_GROUP_CHAT_ID,
+                photo_paths=photo_paths,
+                message_thread_id=TROPHY_GROUP_TOPIC_ID
+            )
+    
+    except Exception as e:
+        print(f"Ошибка отправки заявки в группу: {e}")
+        # Не прерываем выполнение, но логируем ошибку
+    
+    finally:
+        # Удаляем временную директорию
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as e:
+                print(f"Ошибка удаления временной директории: {e}")
+    
+    return {
+        "status": "ok",
+        "message": "Заявка успешно отправлена"
+    }
+
+
+# ========== API ENDPOINTS ДЛЯ ОБРАБОТКИ ЗАЯВОК (вызываются ботом) ==========
+
+def verify_bot_authorization(authorization: Optional[str] = Header(None)) -> bool:
+    """
+    Проверяет авторизацию бота для внутренних endpoints.
+    Бот должен передать BOT_TOKEN в заголовке Authorization.
+    """
+    if not authorization:
+        return False
+    # Формат: "Bearer {BOT_TOKEN}" или просто "{BOT_TOKEN}"
+    token = authorization.replace("Bearer ", "").strip()
+    return token == BOT_TOKEN
+
+
+@app.post("/api/mastery.approve")
+async def approve_mastery_application(
+    user_id: int = Form(...),
+    category_key: str = Form(...),
+    next_level: int = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Одобряет заявку на повышение уровня мастерства.
+    Вызывается ботом при нажатии кнопки "Одобрить".
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Импортируем функции для работы с БД
+    from db import set_mastery, get_user, get_mastery
+    
+    # Получаем текущий уровень пользователя из БД
+    mastery_data = get_mastery(DB_PATH, user_id)
+    current_level = mastery_data.get(category_key, 0)
+    
+    # Проверяем, что next_level действительно current_level + 1
+    expected_next_level = current_level + 1
+    if next_level != expected_next_level:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Несоответствие уровней: текущий {current_level}, переданный next_level {next_level}, ожидаемый {expected_next_level}"
+        )
+    
+    # Обновляем уровень в БД (записываем current_level + 1)
+    new_level = current_level + 1
+    success = set_mastery(DB_PATH, user_id, category_key, new_level)
+    if not success:
+        raise HTTPException(status_code=500, detail="Ошибка обновления уровня в БД")
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    psn_id = user_profile.get('psn_id', '')
+    username = user_profile.get('real_name', '')
+    
+    # Загружаем конфиг для получения названий
+    try:
+        config = load_mastery_config()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
+    
+    # Находим категорию и уровень в конфиге
+    category = None
+    level_data = None
+    for cat in config.get('categories', []):
+        if cat.get('key') == category_key:
+            category = cat
+            for level in cat.get('levels', []):
+                if level.get('level') == next_level:
+                    level_data = level
+                    break
+            break
+    
+    category_name = category.get('name', category_key) if category else category_key
+    level_name = level_data.get('name', f'Уровень {next_level}') if level_data else f'Уровень {next_level}'
+    
+    # Отправляем уведомление пользователю в личку с полной информацией
+    try:
+        user_notification = f"""✅ <b>Ваша заявка на повышение уровня мастерства была одобрена!</b>
+
+Категория: <b>{category_name}</b>
+Запрашиваемый уровень: Уровень {next_level} — {level_name}
+
+📊 <b>Текущий уровень:</b> Уровень {next_level} — {level_name}"""
+        
+        await send_telegram_message(
+            chat_id=str(user_id),
+            text=user_notification
+        )
+    except Exception as e:
+        print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+    
+    # Отправляем сообщение в группу поздравлений (если указан в .env)
+    # Но CONGRATULATIONS_CHAT_ID теперь не в API, нужно передать его боту или вернуть в ответе
+    # Пока пропускаем, бот сам отправит
+    
+    return {
+        "status": "ok",
+        "success": True,
+        "category_name": category_name,
+        "level_name": level_name,
+        "psn_id": psn_id,
+        "username": username,
+        "user_id": user_id
+    }
+
+
+@app.post("/api/mastery.reject")
+async def reject_mastery_application(
+    user_id: int = Form(...),
+    category_key: str = Form(...),
+    next_level: int = Form(...),
+    reason: str = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Отклоняет заявку на повышение уровня мастерства.
+    Вызывается ботом после получения причины отклонения от модератора.
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Импортируем функции для работы с БД
+    from db import get_user
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    # Загружаем конфиг для получения названий
+    try:
+        config = load_mastery_config()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
+    
+    # Находим категорию и уровень в конфиге
+    category = None
+    level_data = None
+    for cat in config.get('categories', []):
+        if cat.get('key') == category_key:
+            category = cat
+            for level in cat.get('levels', []):
+                if level.get('level') == next_level:
+                    level_data = level
+                    break
+            break
+    
+    category_name = category.get('name', category_key) if category else category_key
+    level_name = level_data.get('name', f'Уровень {next_level}') if level_data else f'Уровень {next_level}'
+    
+    # Отправляем уведомление пользователю в личку с полной информацией
+    try:
+        user_notification = f"""❌ <b>К сожалению, ваша заявка на повышение уровня мастерства была отклонена.</b>
+
+Категория: <b>{category_name}</b>
+Запрашиваемый уровень: Уровень {next_level} — {level_name}
+
+Причина: {reason}"""
+        
+        await send_telegram_message(
+            chat_id=str(user_id),
+            text=user_notification
+        )
+    except Exception as e:
+        print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+    
+    return {
+        "status": "ok",
+        "success": True,
+        "category_name": category_name,
+        "level_name": level_name
+    }
+
+
 # Обработчик ошибок для CORS
 @app.exception_handler(HTTPException)
 async def cors_exception_handler(request, exc):
@@ -1103,6 +1513,7 @@ async def cors_exception_handler(request, exc):
 
 # Запуск приложения
 if __name__ == "__main__":
+    import uvicorn
     print("🚀 Запуск Tsushima Mini App API...")
     print(f"📁 База данных: {DB_PATH}")
     print(f"🌐 Разрешенный origin: {ALLOWED_ORIGIN}")
