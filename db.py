@@ -21,7 +21,7 @@ def init_db(db_path: str) -> None:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-    # Создаем таблицу users (без колонки trophies)
+    # Создаем таблицу users (без колонки trophies, с avatar_url)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -30,7 +30,8 @@ def init_db(db_path: str) -> None:
             platforms TEXT,
             modes TEXT,
             goals TEXT,
-            difficulties TEXT
+            difficulties TEXT,
+            avatar_url TEXT
         )
     ''')
     
@@ -47,34 +48,63 @@ def init_db(db_path: str) -> None:
         cursor.execute('DROP INDEX IF EXISTS idx_trophies_name')
     except Exception:
         pass
-    # 3) Если в таблице users есть колонка trophies — выполняем миграцию без потери данных
+    # 3) Миграция: удалить trophies и добавить avatar_url
     try:
         cursor.execute("PRAGMA table_info(users)")
         columns_info = cursor.fetchall()
         column_names = [c[1] for c in columns_info]
+        
+        needs_migration = False
+        migration_fields = []
+        
+        # Собираем список полей для миграции
+        if 'user_id' in column_names:
+            migration_fields.append('user_id INTEGER PRIMARY KEY')
+        if 'real_name' in column_names:
+            migration_fields.append('real_name TEXT')
+        if 'psn_id' in column_names:
+            migration_fields.append('psn_id TEXT')
+        if 'platforms' in column_names:
+            migration_fields.append('platforms TEXT')
+        if 'modes' in column_names:
+            migration_fields.append('modes TEXT')
+        if 'goals' in column_names:
+            migration_fields.append('goals TEXT')
+        if 'difficulties' in column_names:
+            migration_fields.append('difficulties TEXT')
+        
+        # Добавляем avatar_url если его нет
+        if 'avatar_url' not in column_names:
+            migration_fields.append('avatar_url TEXT')
+            needs_migration = True
+        
+        # Убираем trophies если он есть
         if 'trophies' in column_names:
-            # Пересоздаем таблицу users без trophies
-            cursor.execute('''
+            needs_migration = True
+        
+        if needs_migration:
+            # Пересоздаем таблицу users с новой структурой
+            cursor.execute(f'''
                 CREATE TABLE IF NOT EXISTS users_new (
-                    user_id INTEGER PRIMARY KEY,
-                    real_name TEXT,
-                    psn_id TEXT,
-                    platforms TEXT,
-                    modes TEXT,
-                    goals TEXT,
-                    difficulties TEXT
+                    {', '.join(migration_fields)}
                 )
             ''')
-            # Копируем данные без trophies
-            cursor.execute('''
-                INSERT INTO users_new (user_id, real_name, psn_id, platforms, modes, goals, difficulties)
-                SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties FROM users
+            
+            # Копируем данные (исключаем trophies, добавляем avatar_url)
+            fields_to_copy = [f for f in ['user_id', 'real_name', 'psn_id', 'platforms', 'modes', 'goals', 'difficulties'] if f in column_names]
+            cursor.execute(f'''
+                INSERT INTO users_new ({', '.join(fields_to_copy)})
+                SELECT {', '.join(fields_to_copy)} FROM users
             ''')
+            
             # Переименовываем таблицы
             cursor.execute('DROP TABLE users')
             cursor.execute('ALTER TABLE users_new RENAME TO users')
             # Восстанавливаем индекс по user_id
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)')
+        elif 'avatar_url' not in column_names:
+            # Если миграция не нужна, но avatar_url нет - добавляем колонку напрямую
+            cursor.execute('ALTER TABLE users ADD COLUMN avatar_url TEXT')
     except Exception:
         pass
     
@@ -142,7 +172,7 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
     cursor = conn.cursor()
     
     cursor.execute('''
-        SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties
+        SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties, avatar_url
         FROM users WHERE user_id = ?
     ''', (user_id,))
     
@@ -160,7 +190,8 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
         'platforms': [p.strip() for p in row[3].split(',') if p.strip()] if row[3] else [],
         'modes': [m.strip() for m in row[4].split(',') if m.strip()] if row[4] else [],
         'goals': [g.strip() for g in row[5].split(',') if g.strip()] if row[5] else [],
-        'difficulties': [d.strip() for d in row[6].split(',') if d.strip()] if row[6] else []
+        'difficulties': [d.strip() for d in row[6].split(',') if d.strip()] if row[6] else [],
+        'avatar_url': row[7]
     }
     
     return profile
@@ -199,28 +230,50 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
         cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
         exists = cursor.fetchone() is not None
 
+        # Получаем avatar_url только если оно явно передано
+        avatar_url = profile_data.get('avatar_url')
+        
         if exists:
             # UPDATE существующего пользователя
-            cursor.execute('''
-                UPDATE users 
-                SET real_name = ?, psn_id = ?, platforms = ?, modes = ?, 
-                    goals = ?, difficulties = ?
-                WHERE user_id = ?
-            ''', (
-                profile_data.get('real_name', ''),
-                profile_data.get('psn_id', ''),
-                platforms_str,
-                modes_str,
-                goals_str,
-                difficulties_str,
-                user_id
-            ))
+            if avatar_url is not None:
+                # Обновляем с avatar_url
+                cursor.execute('''
+                    UPDATE users 
+                    SET real_name = ?, psn_id = ?, platforms = ?, modes = ?, 
+                        goals = ?, difficulties = ?, avatar_url = ?
+                    WHERE user_id = ?
+                ''', (
+                    profile_data.get('real_name', ''),
+                    profile_data.get('psn_id', ''),
+                    platforms_str,
+                    modes_str,
+                    goals_str,
+                    difficulties_str,
+                    avatar_url,
+                    user_id
+                ))
+            else:
+                # Обновляем без avatar_url (сохраняем старое значение)
+                cursor.execute('''
+                    UPDATE users 
+                    SET real_name = ?, psn_id = ?, platforms = ?, modes = ?, 
+                        goals = ?, difficulties = ?
+                    WHERE user_id = ?
+                ''', (
+                    profile_data.get('real_name', ''),
+                    profile_data.get('psn_id', ''),
+                    platforms_str,
+                    modes_str,
+                    goals_str,
+                    difficulties_str,
+                    user_id
+                ))
         else:
             # INSERT нового пользователя
             cursor.execute('''
                 INSERT INTO users 
-                (user_id, real_name, psn_id, platforms, modes, goals, difficulties)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (user_id, real_name, psn_id, platforms, modes, goals, difficulties, avatar_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user_id,
                 profile_data.get('real_name', ''),
@@ -228,7 +281,8 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 platforms_str,
                 modes_str,
                 goals_str,
-                difficulties_str
+                difficulties_str,
+                avatar_url
             ))
             
             # Автоматически создаём запись в mastery для нового пользователя
@@ -792,7 +846,7 @@ def get_all_users(db_path: str) -> List[Dict[str, Any]]:
         db_path: Путь к файлу базы данных
     
     Returns:
-        Список словарей с данными пользователей (user_id и psn_id)
+        Список словарей с данными пользователей (user_id, psn_id, avatar_url и mastery уровни)
     """
     try:
         if not os.path.exists(db_path):
@@ -802,10 +856,15 @@ def get_all_users(db_path: str) -> List[Dict[str, Any]]:
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT user_id, psn_id 
-            FROM users 
-            WHERE psn_id IS NOT NULL AND psn_id != ''
-            ORDER BY psn_id COLLATE NOCASE
+            SELECT u.user_id, u.psn_id, u.avatar_url,
+                   COALESCE(m.solo, 0) as solo,
+                   COALESCE(m.hellmode, 0) as hellmode,
+                   COALESCE(m.raid, 0) as raid,
+                   COALESCE(m.speedrun, 0) as speedrun
+            FROM users u
+            LEFT JOIN mastery m ON u.user_id = m.user_id
+            WHERE u.psn_id IS NOT NULL AND u.psn_id != ''
+            ORDER BY u.psn_id COLLATE NOCASE
         ''')
         
         rows = cursor.fetchall()
@@ -815,7 +874,14 @@ def get_all_users(db_path: str) -> List[Dict[str, Any]]:
         for row in rows:
             users.append({
                 'user_id': row[0],
-                'psn_id': row[1]
+                'psn_id': row[1],
+                'avatar_url': row[2],
+                'mastery': {
+                    'solo': row[3],
+                    'hellmode': row[4],
+                    'raid': row[5],
+                    'speedrun': row[6]
+                }
             })
         
         return users

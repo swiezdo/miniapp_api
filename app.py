@@ -8,6 +8,7 @@ import json
 import time
 import requests
 import tempfile
+import sqlite3
 from fastapi import FastAPI, HTTPException, Depends, Header, Form, File, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -301,12 +302,14 @@ async def get_profile(user_id: int = Depends(get_current_user)):
     
     # Убираем служебные поля из ответа
     response_data = {
+        "user_id": user_id,  # Нужен для загрузки аватарки на фронтенде
         "real_name": profile.get("real_name", ""),
         "psn_id": profile.get("psn_id", ""),
         "platforms": profile.get("platforms", []),
         "modes": profile.get("modes", []),
         "goals": profile.get("goals", []),
-        "difficulties": profile.get("difficulties", [])
+        "difficulties": profile.get("difficulties", []),
+        "avatar_url": profile.get("avatar_url")
     }
     
     return response_data
@@ -381,9 +384,47 @@ async def get_users_list(user_id: int = Depends(get_current_user)):
         user_id: ID пользователя (из dependency, для проверки авторизации)
     
     Returns:
-        JSON со списком пользователей (user_id и psn_id)
+        JSON со списком пользователей (user_id, psn_id, avatar_url и max_mastery_levels)
     """
     users = get_all_users(DB_PATH)
+    
+    # Загружаем конфиг мастерства для определения максимальных уровней
+    try:
+        config = load_mastery_config()
+        
+        # Создаем словарь максимальных уровней по категориям
+        max_levels_map = {}
+        for category in config.get('categories', []):
+            category_key = category.get('key')
+            max_levels = category.get('maxLevels', 0)
+            if category_key:
+                max_levels_map[category_key] = max_levels
+        
+        # Определяем категории с максимальными уровнями для каждого пользователя
+        for user in users:
+            max_mastery_levels = []
+            mastery = user.get('mastery', {})
+            
+            # Проверяем категории в строгом порядке: solo, hellmode, raid, speedrun
+            categories_order = ['solo', 'hellmode', 'raid', 'speedrun']
+            for category_key in categories_order:
+                if category_key in max_levels_map:
+                    max_level = max_levels_map[category_key]
+                    current_level = mastery.get(category_key, 0)
+                    if current_level >= max_level and max_level > 0:
+                        max_mastery_levels.append(category_key)
+            
+            # Удаляем поле mastery из ответа (оставляем только max_mastery_levels)
+            user.pop('mastery', None)
+            user['max_mastery_levels'] = max_mastery_levels
+    
+    except Exception as e:
+        print(f"Ошибка обработки уровней мастерства: {e}")
+        # В случае ошибки просто добавляем пустой массив для всех пользователей
+        for user in users:
+            user.pop('mastery', None)
+            user['max_mastery_levels'] = []
+    
     return {"users": users}
 
 
@@ -418,7 +459,8 @@ async def get_user_profile(
         "platforms": profile.get("platforms", []),
         "modes": profile.get("modes", []),
         "goals": profile.get("goals", []),
-        "difficulties": profile.get("difficulties", [])
+        "difficulties": profile.get("difficulties", []),
+        "avatar_url": profile.get("avatar_url")
     }
     
     return response_data
@@ -437,6 +479,124 @@ async def get_stats():
         "total_users": user_count,
         "api_version": "1.0.0"
     }
+
+
+# ========== API ЭНДПОИНТЫ ДЛЯ АВАТАРОК ==========
+
+@app.post("/api/users/avatars/{target_user_id}/upload")
+async def upload_avatar(
+    target_user_id: int,
+    avatar: UploadFile = File(...),
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Загружает аватарку пользователя.
+    
+    Args:
+        target_user_id: ID пользователя, для которого загружается аватарка
+        avatar: Загружаемое изображение
+        user_id: ID текущего пользователя (для проверки прав)
+    
+    Returns:
+        JSON с результатом операции
+    """
+    # Проверка прав доступа
+    if target_user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Вы можете загружать аватарку только для себя"
+        )
+    
+    # Валидация типа файла
+    if not avatar.content_type or not avatar.content_type.startswith('image/'):
+        raise HTTPException(
+            status_code=400,
+            detail="Разрешены только изображения"
+        )
+    
+    # Обрабатываем и сохраняем изображение
+    try:
+        # Создаем директорию для пользователя
+        user_dir = os.path.join(os.path.dirname(DB_PATH), 'users', str(user_id))
+        os.makedirs(user_dir, exist_ok=True)
+        
+        # Путь для сохранения аватарки
+        avatar_path = os.path.join(user_dir, 'avatar.jpg')
+        
+        # Открываем изображение через Pillow
+        image = Image.open(avatar.file)
+        
+        # Исправляем ориентацию согласно EXIF-метаданным
+        image = ImageOps.exif_transpose(image)
+        
+        # Квадратная обрезка по центру
+        width, height = image.size
+        min_dimension = min(width, height)
+        left = (width - min_dimension) // 2
+        top = (height - min_dimension) // 2
+        right = left + min_dimension
+        bottom = top + min_dimension
+        image = image.crop((left, top, right, bottom))
+        
+        # Ресайз до 300x300
+        image = image.resize((300, 300), Image.Resampling.LANCZOS)
+        
+        # Конвертируем в RGB если нужно
+        if image.mode in ('RGBA', 'LA', 'P'):
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            if image.mode == 'P':
+                image = image.convert('RGBA')
+            background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
+            image = background
+        
+        # Сохраняем как JPEG
+        image.save(avatar_path, 'JPEG', quality=85, optimize=True)
+        
+        # Обновляем avatar_url в БД
+        avatar_url = f"/users/{user_id}/avatar.jpg"
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE users SET avatar_url = ? WHERE user_id = ?
+        ''', (avatar_url, user_id))
+        conn.commit()
+        conn.close()
+        
+        return {
+            "status": "ok",
+            "message": "Аватарка успешно загружена",
+            "avatar_url": avatar_url
+        }
+        
+    except Exception as e:
+        print(f"Ошибка обработки аватарки: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка обработки аватарки: {str(e)}"
+        )
+
+
+@app.get("/users/{user_id}/avatar.jpg")
+async def get_avatar(user_id: int):
+    """
+    Возвращает аватарку пользователя.
+    
+    Args:
+        user_id: ID пользователя
+    
+    Returns:
+        Изображение аватарки или 404 если не найдена
+    """
+    avatar_path = os.path.join(os.path.dirname(DB_PATH), 'users', str(user_id), 'avatar.jpg')
+    
+    if not os.path.exists(avatar_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Аватарка не найдена"
+        )
+    
+    return FileResponse(avatar_path, media_type='image/jpeg')
 
 
 # ========== API ЭНДПОИНТЫ ДЛЯ БИЛДОВ ==========

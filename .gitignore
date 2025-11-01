@@ -155,3 +155,4 @@ logs/
 # Application specific directories
 builds/
 trophies/
+users/
