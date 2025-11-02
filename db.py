@@ -268,12 +268,16 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
         
         # Проверяем существует ли пользователь
         cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
-        exists = cursor.fetchone() is not None
+        user_exists = cursor.fetchone() is not None
+        
+        # Проверяем существует ли запись в mastery
+        cursor.execute('SELECT user_id FROM mastery WHERE user_id = ?', (user_id,))
+        mastery_exists = cursor.fetchone() is not None
 
         # Получаем avatar_url только если оно явно передано
         avatar_url = profile_data.get('avatar_url')
         
-        if exists:
+        if user_exists:
             # UPDATE существующего пользователя
             if avatar_url is not None:
                 # Обновляем с avatar_url
@@ -308,6 +312,13 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                     difficulties_str,
                     user_id
                 ))
+            
+            # Убеждаемся что запись в mastery существует (создаём если её нет)
+            if not mastery_exists:
+                cursor.execute('''
+                    INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun)
+                    VALUES (?, 0, 0, 0, 0)
+                ''', (user_id,))
         else:
             # INSERT нового пользователя
             cursor.execute('''
@@ -325,11 +336,12 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 avatar_url
             ))
             
-            # Автоматически создаём запись в mastery для нового пользователя
-            cursor.execute('''
-                INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun)
-                VALUES (?, 0, 0, 0, 0)
-            ''', (user_id,))
+            # Автоматически создаём запись в mastery для нового пользователя (только если её нет)
+            if not mastery_exists:
+                cursor.execute('''
+                    INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun)
+                    VALUES (?, 0, 0, 0, 0)
+                ''', (user_id,))
         
         conn.commit()
         conn.close()
@@ -337,6 +349,10 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
         return True
         
     except Exception as e:
+        print(f"❌ ОШИБКА в upsert_user для user_id={user_id}: {type(e).__name__}: {e}")
+        print(f"❌ Данные профиля: {profile_data}")
+        import traceback
+        traceback.print_exc()
         return False
 
 

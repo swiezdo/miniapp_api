@@ -364,12 +364,24 @@ async def save_profile(
     }
 
     # Сохраняем профиль
-    success = upsert_user(DB_PATH, user_id, profile_data)
-
-    if not success:
+    try:
+        success = upsert_user(DB_PATH, user_id, profile_data)
+        
+        if not success:
+            print(f"❌ ОШИБКА: upsert_user вернул False для user_id={user_id}")
+            print(f"❌ Данные профиля: {profile_data}")
+            raise HTTPException(
+                status_code=500,
+                detail="Ошибка при сохранении профиля в базу данных"
+            )
+    except Exception as e:
+        print(f"❌ ОШИБКА при вызове upsert_user: {type(e).__name__}: {e}")
+        print(f"❌ Traceback:")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail="Ошибка при сохранении профиля"
+            detail=f"Ошибка при сохранении профиля: {str(e)}"
         )
 
     return {"status": "ok", "message": "Профиль успешно сохранен"}
