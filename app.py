@@ -20,7 +20,7 @@ import re
 
 # Импортируем наши модули
 from security import validate_init_data, get_user_id_from_init_data
-from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments
+from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments, toggle_reaction, get_reactions
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -1125,6 +1125,88 @@ async def get_comments_endpoint(build_id: int):
         "status": "ok",
         "comments": comments
     }
+
+
+# ========== API ЭНДПОИНТЫ ДЛЯ РЕАКЦИЙ (ЛАЙКИ/ДИЗЛАЙКИ) ==========
+
+@app.post("/api/builds.toggleReaction")
+async def toggle_reaction_endpoint(
+    user_id: int = Depends(get_current_user),
+    build_id: int = Form(...),
+    reaction_type: str = Form(...)
+):
+    """
+    Переключает реакцию пользователя на билд (лайк/дизлайк).
+    
+    Args:
+        user_id: ID текущего пользователя (из dependency)
+        build_id: ID билда
+        reaction_type: Тип реакции ('like' или 'dislike')
+    
+    Returns:
+        JSON с обновленной статистикой реакций
+    """
+    # Проверяем, что билд существует
+    build = get_build(DB_PATH, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Билд не найден")
+    
+    # Проверяем, что билд публичный
+    if not build.get('is_public'):
+        raise HTTPException(status_code=403, detail="Реакции можно ставить только на публичные билды")
+    
+    # Валидация типа реакции
+    if reaction_type not in ('like', 'dislike'):
+        raise HTTPException(status_code=400, detail="reaction_type должен быть 'like' или 'dislike'")
+    
+    try:
+        # Переключаем реакцию
+        result = toggle_reaction(DB_PATH, build_id, user_id, reaction_type)
+        
+        return {
+            "status": "ok",
+            "likes_count": result['likes_count'],
+            "dislikes_count": result['dislikes_count'],
+            "current_user_reaction": result['current_user_reaction']
+        }
+    except Exception as e:
+        print(f"Ошибка переключения реакции: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка переключения реакции: {str(e)}")
+
+
+@app.get("/api/builds.getReactions/{build_id}")
+async def get_reactions_endpoint(
+    build_id: int,
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Получает статистику реакций для билда и текущую реакцию пользователя.
+    
+    Args:
+        build_id: ID билда
+        user_id: ID текущего пользователя (из dependency)
+    
+    Returns:
+        JSON со статистикой реакций
+    """
+    # Проверяем, что билд существует
+    build = get_build(DB_PATH, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Билд не найден")
+    
+    try:
+        # Получаем реакции
+        result = get_reactions(DB_PATH, build_id, user_id)
+        
+        return {
+            "status": "ok",
+            "likes_count": result['likes_count'],
+            "dislikes_count": result['dislikes_count'],
+            "current_user_reaction": result['current_user_reaction']
+        }
+    except Exception as e:
+        print(f"Ошибка получения реакций: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка получения реакций: {str(e)}")
 
 
     # Удалён функционал информации о трофеях

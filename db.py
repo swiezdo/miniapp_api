@@ -169,6 +169,27 @@ def init_db(db_path: str) -> None:
         CREATE INDEX IF NOT EXISTS idx_comments_user_id ON comments(user_id)
     ''')
     
+    # Создаем таблицу build_reactions для лайков/дизлайков
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS build_reactions (
+            reaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            build_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            reaction_type TEXT NOT NULL CHECK(reaction_type IN ('like', 'dislike')),
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY(build_id) REFERENCES builds(build_id),
+            UNIQUE(build_id, user_id)
+        )
+    ''')
+    
+    # Создаем индексы для build_reactions
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_reactions_build_id ON build_reactions(build_id)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_reactions_user_id ON build_reactions(user_id)
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -1107,4 +1128,166 @@ def get_build_comments(db_path: str, build_id: int) -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"Ошибка получения комментариев: {e}")
         return []
+
+
+def toggle_reaction(db_path: str, build_id: int, user_id: int, reaction_type: str) -> Dict[str, Any]:
+    """
+    Переключает реакцию пользователя на билд.
+    
+    Логика:
+    - Если реакции нет - создает новую
+    - Если реакция того же типа - удаляет её
+    - Если реакция противоположного типа - заменяет на новый тип
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        build_id: ID билда
+        user_id: ID пользователя
+        reaction_type: Тип реакции ('like' или 'dislike')
+    
+    Returns:
+        Словарь с обновленной статистикой: {
+            'likes_count': int,
+            'dislikes_count': int,
+            'current_user_reaction': str | None  # 'like', 'dislike' или None
+        }
+    """
+    try:
+        if not os.path.exists(db_path):
+            init_db(db_path)
+        
+        if reaction_type not in ('like', 'dislike'):
+            raise ValueError("reaction_type должен быть 'like' или 'dislike'")
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Проверяем существующую реакцию
+        cursor.execute('''
+            SELECT reaction_type FROM build_reactions
+            WHERE build_id = ? AND user_id = ?
+        ''', (build_id, user_id))
+        
+        existing = cursor.fetchone()
+        current_time = int(time.time())
+        
+        if existing:
+            existing_type = existing[0]
+            if existing_type == reaction_type:
+                # Та же реакция - удаляем
+                cursor.execute('''
+                    DELETE FROM build_reactions
+                    WHERE build_id = ? AND user_id = ?
+                ''', (build_id, user_id))
+                final_reaction = None
+            else:
+                # Противоположная реакция - заменяем
+                cursor.execute('''
+                    UPDATE build_reactions
+                    SET reaction_type = ?, created_at = ?
+                    WHERE build_id = ? AND user_id = ?
+                ''', (reaction_type, current_time, build_id, user_id))
+                final_reaction = reaction_type
+        else:
+            # Нет реакции - создаем новую
+            cursor.execute('''
+                INSERT INTO build_reactions (build_id, user_id, reaction_type, created_at)
+                VALUES (?, ?, ?, ?)
+            ''', (build_id, user_id, reaction_type, current_time))
+            final_reaction = reaction_type
+        
+        # Получаем обновленную статистику
+        cursor.execute('''
+            SELECT 
+                SUM(CASE WHEN reaction_type = 'like' THEN 1 ELSE 0 END) as likes_count,
+                SUM(CASE WHEN reaction_type = 'dislike' THEN 1 ELSE 0 END) as dislikes_count
+            FROM build_reactions
+            WHERE build_id = ?
+        ''', (build_id,))
+        
+        stats = cursor.fetchone()
+        likes_count = stats[0] or 0
+        dislikes_count = stats[1] or 0
+        
+        conn.commit()
+        conn.close()
+        
+        return {
+            'likes_count': likes_count,
+            'dislikes_count': dislikes_count,
+            'current_user_reaction': final_reaction
+        }
+        
+    except Exception as e:
+        print(f"Ошибка переключения реакции: {e}")
+        raise
+
+
+def get_reactions(db_path: str, build_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Получает статистику реакций для билда и текущую реакцию пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        build_id: ID билда
+        user_id: ID пользователя (опционально, для получения его реакции)
+    
+    Returns:
+        Словарь с данными: {
+            'likes_count': int,
+            'dislikes_count': int,
+            'current_user_reaction': str | None  # 'like', 'dislike' или None
+        }
+    """
+    try:
+        if not os.path.exists(db_path):
+            return {
+                'likes_count': 0,
+                'dislikes_count': 0,
+                'current_user_reaction': None
+            }
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Получаем статистику
+        cursor.execute('''
+            SELECT 
+                SUM(CASE WHEN reaction_type = 'like' THEN 1 ELSE 0 END) as likes_count,
+                SUM(CASE WHEN reaction_type = 'dislike' THEN 1 ELSE 0 END) as dislikes_count
+            FROM build_reactions
+            WHERE build_id = ?
+        ''', (build_id,))
+        
+        stats = cursor.fetchone()
+        likes_count = stats[0] or 0
+        dislikes_count = stats[1] or 0
+        
+        # Получаем реакцию пользователя, если передан user_id
+        current_user_reaction = None
+        if user_id is not None:
+            cursor.execute('''
+                SELECT reaction_type FROM build_reactions
+                WHERE build_id = ? AND user_id = ?
+            ''', (build_id, user_id))
+            
+            user_reaction = cursor.fetchone()
+            if user_reaction:
+                current_user_reaction = user_reaction[0]
+        
+        conn.close()
+        
+        return {
+            'likes_count': likes_count,
+            'dislikes_count': dislikes_count,
+            'current_user_reaction': current_user_reaction
+        }
+        
+    except Exception as e:
+        print(f"Ошибка получения реакций: {e}")
+        return {
+            'likes_count': 0,
+            'dislikes_count': 0,
+            'current_user_reaction': None
+        }
         
