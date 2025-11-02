@@ -1383,15 +1383,24 @@ async def submit_feedback(
 # ========== API ЭНДПОИНТЫ ДЛЯ МАСТЕРСТВА ==========
 
 @app.get("/api/mastery.get")
-async def get_mastery_levels(user_id: int = Depends(get_current_user)):
+async def get_mastery_levels(
+    target_user_id: Optional[int] = None,
+    user_id: int = Depends(get_current_user)
+):
     """
-    Получает уровни мастерства текущего пользователя.
+    Получает уровни мастерства пользователя.
+    
+    Args:
+        target_user_id: ID пользователя, чьё мастерство нужно получить (если не указан, возвращает данные текущего пользователя)
+        user_id: ID текущего пользователя (из dependency, для проверки авторизации)
     
     Returns:
         Словарь с уровнями по категориям: {"solo": 0, "hellmode": 0, "raid": 0, "speedrun": 0}
     """
     try:
-        mastery = get_mastery(DB_PATH, user_id)
+        # Если указан target_user_id, используем его, иначе берем текущего пользователя
+        target_id = target_user_id if target_user_id is not None else user_id
+        mastery = get_mastery(DB_PATH, target_id)
         return mastery
     except Exception as e:
         raise HTTPException(
