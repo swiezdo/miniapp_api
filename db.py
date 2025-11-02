@@ -548,13 +548,13 @@ def get_user_builds(db_path: str, user_id: int) -> List[Dict[str, Any]]:
 
 def get_public_builds(db_path: str) -> List[Dict[str, Any]]:
     """
-    Получает все публичные билды.
+    Получает все публичные билды со статистикой комментариев и реакций.
     
     Args:
         db_path: Путь к файлу базы данных
     
     Returns:
-        Список словарей с данными публичных билдов
+        Список словарей с данными публичных билдов (включая comments_count, likes_count, dislikes_count)
     """
     try:
         if not os.path.exists(db_path):
@@ -563,11 +563,21 @@ def get_public_builds(db_path: str) -> List[Dict[str, Any]]:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
+        # Получаем билды с LEFT JOIN для статистики комментариев и реакций
         cursor.execute('''
-            SELECT build_id, user_id, author, name, class, tags, description, 
-                   photo_1, photo_2, created_at, is_public
-            FROM builds WHERE is_public = 1
-            ORDER BY created_at DESC
+            SELECT 
+                b.build_id, b.user_id, b.author, b.name, b.class, b.tags, b.description, 
+                b.photo_1, b.photo_2, b.created_at, b.is_public,
+                COUNT(DISTINCT c.comment_id) as comments_count,
+                SUM(CASE WHEN r.reaction_type = 'like' THEN 1 ELSE 0 END) as likes_count,
+                SUM(CASE WHEN r.reaction_type = 'dislike' THEN 1 ELSE 0 END) as dislikes_count
+            FROM builds b
+            LEFT JOIN comments c ON b.build_id = c.build_id
+            LEFT JOIN build_reactions r ON b.build_id = r.build_id
+            WHERE b.is_public = 1
+            GROUP BY b.build_id, b.user_id, b.author, b.name, b.class, b.tags, b.description, 
+                     b.photo_1, b.photo_2, b.created_at, b.is_public
+            ORDER BY b.created_at DESC
         ''')
         
         rows = cursor.fetchall()
@@ -586,7 +596,10 @@ def get_public_builds(db_path: str) -> List[Dict[str, Any]]:
                 'photo_1': row[7],
                 'photo_2': row[8],
                 'created_at': row[9],
-                'is_public': row[10]
+                'is_public': row[10],
+                'comments_count': row[11] or 0,
+                'likes_count': row[12] or 0,
+                'dislikes_count': row[13] or 0
             })
         
         return builds
