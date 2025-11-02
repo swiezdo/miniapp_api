@@ -150,6 +150,25 @@ def init_db(db_path: str) -> None:
         CREATE INDEX IF NOT EXISTS idx_mastery_user_id ON mastery(user_id)
     ''')
     
+    # Создаем таблицу comments
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS comments (
+            comment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            build_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            comment_text TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        )
+    ''')
+    
+    # Создаем индексы для comments
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_comments_build_id ON comments(build_id)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_comments_user_id ON comments(user_id)
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -988,4 +1007,104 @@ def set_mastery(db_path: str, user_id: int, category: str, level: int) -> bool:
     except Exception as e:
         print(f"Ошибка сохранения уровня мастерства: {e}")
         return False
+
+
+def create_comment(db_path: str, build_id: int, user_id: int, comment_text: str) -> Optional[int]:
+    """
+    Создает новый комментарий к билду.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        build_id: ID билда, к которому добавляется комментарий
+        user_id: ID пользователя, который оставляет комментарий
+        comment_text: Текст комментария (максимум 500 символов)
+    
+    Returns:
+        comment_id созданного комментария или None при ошибке
+    """
+    try:
+        if not os.path.exists(db_path):
+            init_db(db_path)
+        
+        # Валидация длины комментария
+        if len(comment_text.strip()) == 0:
+            return None
+        if len(comment_text) > 500:
+            comment_text = comment_text[:500]
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        current_time = int(time.time())
+        
+        cursor.execute('''
+            INSERT INTO comments 
+            (build_id, user_id, comment_text, created_at)
+            VALUES (?, ?, ?, ?)
+        ''', (
+            build_id,
+            user_id,
+            comment_text.strip(),
+            current_time
+        ))
+        
+        comment_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        return comment_id
+        
+    except Exception as e:
+        print(f"Ошибка создания комментария: {e}")
+        return None
+
+
+def get_build_comments(db_path: str, build_id: int) -> List[Dict[str, Any]]:
+    """
+    Получает все комментарии для билда с информацией об авторах.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        build_id: ID билда
+    
+    Returns:
+        Список словарей с данными комментариев (comment_id, build_id, user_id, 
+        real_name автора, comment_text, created_at), отсортированные по дате создания (старые сначала)
+    """
+    try:
+        if not os.path.exists(db_path):
+            return []
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT c.comment_id, c.build_id, c.user_id, u.psn_id, u.avatar_url,
+                   c.comment_text, c.created_at
+            FROM comments c
+            LEFT JOIN users u ON c.user_id = u.user_id
+            WHERE c.build_id = ?
+            ORDER BY c.created_at ASC
+        ''', (build_id,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        comments = []
+        for row in rows:
+            comments.append({
+                'comment_id': row[0],
+                'build_id': row[1],
+                'user_id': row[2],
+                'author': row[3] or 'Неизвестный пользователь',
+                'avatar_url': row[4],
+                'comment_text': row[5],
+                'created_at': row[6]
+            })
+        
+        return comments
+        
+    except Exception as e:
+        print(f"Ошибка получения комментариев: {e}")
+        return []
         

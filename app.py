@@ -20,7 +20,7 @@ import re
 
 # Импортируем наши модули
 from security import validate_init_data, get_user_id_from_init_data
-from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery
+from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -1058,6 +1058,73 @@ async def get_build_photo(build_id: int, photo_name: str):
         )
     
     return FileResponse(photo_path, media_type='image/jpeg')
+
+
+@app.post("/api/comments.create")
+async def create_comment_endpoint(
+    user_id: int = Depends(get_current_user),
+    build_id: int = Form(...),
+    comment_text: str = Form(...)
+):
+    """
+    Создает новый комментарий к билду.
+    
+    Args:
+        user_id: ID текущего пользователя (из dependency)
+        build_id: ID билда, к которому добавляется комментарий
+        comment_text: Текст комментария (максимум 500 символов)
+    
+    Returns:
+        JSON с информацией о созданном комментарии
+    """
+    # Проверяем, что билд существует
+    build = get_build(DB_PATH, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Билд не найден")
+    
+    # Валидация комментария
+    comment_text = comment_text.strip()
+    if len(comment_text) == 0:
+        raise HTTPException(status_code=400, detail="Комментарий не может быть пустым")
+    
+    if len(comment_text) > 500:
+        raise HTTPException(status_code=400, detail="Комментарий слишком длинный (максимум 500 символов)")
+    
+    # Создаем комментарий
+    comment_id = create_comment(DB_PATH, build_id, user_id, comment_text)
+    
+    if not comment_id:
+        raise HTTPException(status_code=500, detail="Ошибка создания комментария")
+    
+    return {
+        "status": "ok",
+        "comment_id": comment_id,
+        "message": "Комментарий успешно создан"
+    }
+
+
+@app.get("/api/comments.get")
+async def get_comments_endpoint(build_id: int):
+    """
+    Получает все комментарии для билда.
+    
+    Args:
+        build_id: ID билда
+    
+    Returns:
+        JSON со списком комментариев
+    """
+    # Проверяем, что билд существует
+    build = get_build(DB_PATH, build_id)
+    if not build:
+        raise HTTPException(status_code=404, detail="Билд не найден")
+    
+    comments = get_build_comments(DB_PATH, build_id)
+    
+    return {
+        "status": "ok",
+        "comments": comments
+    }
 
 
     # Удалён функционал информации о трофеях
