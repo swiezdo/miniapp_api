@@ -47,7 +47,7 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "swiezdo_testbot")
 # Удалены кеш и загрузка данных трофеев
 
 # Функции для работы с Telegram Bot API
-async def send_telegram_message(chat_id: str, text: str, reply_markup: dict = None, message_thread_id: str = None):
+async def send_telegram_message(chat_id: str, text: str, reply_markup: dict = None, message_thread_id: str = None, reply_to_message_id: int = None):
     """
     Отправляет сообщение в Telegram через Bot API.
     """
@@ -66,6 +66,9 @@ async def send_telegram_message(chat_id: str, text: str, reply_markup: dict = No
     
     if reply_markup:
         data["reply_markup"] = json.dumps(reply_markup)
+    
+    if reply_to_message_id:
+        data["reply_to_message_id"] = reply_to_message_id
     
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=data) as response:
@@ -1599,19 +1602,26 @@ async def submit_mastery_application(
                 message_thread_id=TROPHY_GROUP_TOPIC_ID
             )
         else:
-            # Несколько фотографий - сначала текст с кнопками, потом медиагруппа
+            # Несколько фотографий - сначала медиагруппа, потом текст с кнопками как ответ
+            media_group_result = await send_telegram_media_group(
+                chat_id=TROPHY_GROUP_CHAT_ID,
+                photo_paths=photo_paths,
+                message_thread_id=TROPHY_GROUP_TOPIC_ID
+            )
+            
+            # Получаем message_id первого сообщения из медиагруппы
+            reply_to_message_id = None
+            if media_group_result.get('ok') and media_group_result.get('result'):
+                # Первое сообщение в медиагруппе - это первое фото
+                reply_to_message_id = media_group_result['result'][0].get('message_id')
+            
+            # Отправляем текстовое сообщение с кнопками как ответ на первое фото
             await send_telegram_message(
                 chat_id=TROPHY_GROUP_CHAT_ID,
                 text=message_text,
                 reply_markup=reply_markup,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID
-            )
-            
-            # Затем отправляем медиагруппу с фото
-            await send_telegram_media_group(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                photo_paths=photo_paths,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID
+                message_thread_id=TROPHY_GROUP_TOPIC_ID,
+                reply_to_message_id=reply_to_message_id
             )
     
     except Exception as e:
@@ -1871,15 +1881,6 @@ async def get_profile_preview(user_id: int):
     real_name = profile_data.get('real_name', '') or '—'
     psn_id = profile_data.get('psn_id', '') or '—'
     
-    # Функция для создания HTML чипов
-    def create_chips_html(items, container_id):
-        if not items or len(items) == 0:
-            return '<div style="display: none;"></div>'
-        chips_html = ""
-        for item in items:
-            chips_html += f'<span class="chip">{item}</span>'
-        return f'<div id="{container_id}" class="chips-container">{chips_html}</div>'
-    
     platforms_list = profile_data.get('platforms', [])
     modes_list = profile_data.get('modes', [])
     goals_list = profile_data.get('goals', [])
@@ -1891,40 +1892,45 @@ async def get_profile_preview(user_id: int):
     html_content = html_content.replace('<div id="v_psn_id" class="value">—</div>', 
                                        f'<div id="v_psn_id" class="value">{psn_id}</div>')
     
-    # Заменяем контейнеры для чипов
-    html_content = html_content.replace(
-        '<div id="v_platform_chips" class="chips-container"></div>',
-        create_chips_html(platforms_list, 'v_platform_chips')
-    )
-    html_content = html_content.replace(
-        '<div id="v_modes_chips" class="chips-container"></div>',
-        create_chips_html(modes_list, 'v_modes_chips')
-    )
-    html_content = html_content.replace(
-        '<div id="v_goals_chips" class="chips-container"></div>',
-        create_chips_html(goals_list, 'v_goals_chips')
-    )
-    html_content = html_content.replace(
-        '<div id="v_difficulty_chips" class="chips-container"></div>',
-        create_chips_html(difficulties_list, 'v_difficulty_chips')
-    )
+    # Заменяем значения на обычный текст через запятую (вместо чипов)
+    platforms_text = ", ".join(platforms_list) if platforms_list else "—"
+    modes_text = ", ".join(modes_list) if modes_list else "—"
+    goals_text = ", ".join(goals_list) if goals_list else "—"
+    difficulties_text = ", ".join(difficulties_list) if difficulties_list else "—"
     
-    # Скрываем пустые div для value (они не нужны для чипов)
     html_content = html_content.replace(
         '<div id="v_platform" class="value"></div>',
-        '<div id="v_platform" class="value" style="display: none;"></div>'
+        f'<div id="v_platform" class="value">{platforms_text}</div>'
     )
     html_content = html_content.replace(
         '<div id="v_modes" class="value"></div>',
-        '<div id="v_modes" class="value" style="display: none;"></div>'
+        f'<div id="v_modes" class="value">{modes_text}</div>'
     )
     html_content = html_content.replace(
         '<div id="v_goals" class="value"></div>',
-        '<div id="v_goals" class="value" style="display: none;"></div>'
+        f'<div id="v_goals" class="value">{goals_text}</div>'
     )
     html_content = html_content.replace(
         '<div id="v_difficulty" class="value"></div>',
-        '<div id="v_difficulty" class="value" style="display: none;"></div>'
+        f'<div id="v_difficulty" class="value">{difficulties_text}</div>'
+    )
+    
+    # Скрываем контейнеры для чипов (они больше не нужны)
+    html_content = html_content.replace(
+        '<div id="v_platform_chips" class="chips-container"></div>',
+        '<div id="v_platform_chips" class="chips-container" style="display: none;"></div>'
+    )
+    html_content = html_content.replace(
+        '<div id="v_modes_chips" class="chips-container"></div>',
+        '<div id="v_modes_chips" class="chips-container" style="display: none;"></div>'
+    )
+    html_content = html_content.replace(
+        '<div id="v_goals_chips" class="chips-container"></div>',
+        '<div id="v_goals_chips" class="chips-container" style="display: none;"></div>'
+    )
+    html_content = html_content.replace(
+        '<div id="v_difficulty_chips" class="chips-container"></div>',
+        '<div id="v_difficulty_chips" class="chips-container" style="display: none;"></div>'
     )
     
     # Обработка аватарки
@@ -2106,12 +2112,10 @@ async def screenshot_profile(user_id: int, base_url: str = "http://localhost:800
                             // Проверяем, что данные заполнены (не прочерки)
                             const realName = document.getElementById('v_real_name')?.textContent || '';
                             const psnId = document.getElementById('v_psn_id')?.textContent || '';
-                            const chipsLoaded = document.querySelectorAll('.chip').length > 0;
                             
                             // Элемент готов И данные заполнены
                             return readyEl.getAttribute('data-ready') === 'true' && 
-                                   (realName !== '—' || psnId !== '—') && 
-                                   (chipsLoaded || realName !== '—');
+                                   (realName !== '—' || psnId !== '—');
                         }
                         """,
                         timeout=10000
@@ -2143,8 +2147,40 @@ async def screenshot_profile(user_id: int, base_url: str = "http://localhost:800
                         if not has_data:
                             print("Warning: Profile data still not loaded after extended wait")
                 
-                # Делаем скриншот
-                screenshot_bytes = await page.screenshot(type="png", full_page=True)
+                # Определяем реальную высоту контента и делаем скриншот
+                content_bounds = await page.evaluate("""
+                    () => {
+                        const card = document.querySelector('.card');
+                        if (!card) return null;
+                        
+                        // Получаем позицию и размеры карточки
+                        const rect = card.getBoundingClientRect();
+                        
+                        // Добавляем небольшой отступ снизу для красоты
+                        const padding = 20;
+                        
+                        // Ширина должна быть полной шириной экрана, обрезаем только снизу
+                        const fullWidth = window.innerWidth || document.documentElement.clientWidth || 375;
+                        
+                        // Высота = позиция карточки сверху + высота карточки + отступ
+                        return {
+                            x: 0,
+                            y: 0,
+                            width: Math.ceil(fullWidth),
+                            height: Math.ceil(rect.height + rect.top + padding)
+                        };
+                    }
+                """)
+                
+                if content_bounds and content_bounds['height'] > 0:
+                    # Делаем скриншот только нужной области
+                    screenshot_bytes = await page.screenshot(
+                        type="png",
+                        clip=content_bounds
+                    )
+                else:
+                    # Fallback на полный скриншот, если не удалось определить размеры
+                    screenshot_bytes = await page.screenshot(type="png", full_page=True)
                 
                 return screenshot_bytes
                 
