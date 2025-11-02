@@ -9,13 +9,15 @@ import time
 import requests
 import tempfile
 import sqlite3
-from fastapi import FastAPI, HTTPException, Depends, Header, Form, File, UploadFile, Request
+import io
+from fastapi import FastAPI, HTTPException, Depends, Header, Form, File, UploadFile, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from typing import Optional, List, Dict, Any
 from PIL import Image, ImageOps
+from playwright.async_api import async_playwright
 import re
 
 # Импортируем наши модули
@@ -153,6 +155,11 @@ app.add_middleware(
 
 # Инициализируем базу данных при запуске
 init_db(DB_PATH)
+
+# Настраиваем статические файлы для ассетов (мастерство и другие)
+tsushimaru_docs_path = "/root/tsushimaru_app/docs"
+if os.path.exists(tsushimaru_docs_path):
+    app.mount("/assets", StaticFiles(directory=tsushimaru_docs_path), name="assets")
 
 # Удалена синхронизация трофеев при запуске
 
@@ -1807,6 +1814,456 @@ async def reject_mastery_application(
 
 
 # Обработчик ошибок для CORS
+# ========== API ЭНДПОИНТЫ ДЛЯ СКРИНШОТА ПРОФИЛЯ ==========
+
+@app.get("/profile-preview/{user_id}", response_class=HTMLResponse)
+async def get_profile_preview(user_id: int):
+    """
+    Возвращает HTML-страницу профиля для скриншота.
+    
+    Args:
+        user_id: ID пользователя, чей профиль нужно показать
+    """
+    # Читаем HTML-шаблон
+    template_path = os.path.join(os.path.dirname(__file__), 'profile_preview.html')
+    
+    if not os.path.exists(template_path):
+        raise HTTPException(status_code=500, detail="HTML template not found")
+    
+    with open(template_path, 'r', encoding='utf-8') as f:
+        html_content = f.read()
+    
+    # Получаем данные профиля
+    profile = get_user(DB_PATH, user_id)
+    
+    # Получаем данные мастерства
+    mastery_levels = get_mastery(DB_PATH, user_id)
+    
+    # Загружаем конфиг мастерства
+    try:
+        from mastery_config import load_mastery_config
+        mastery_config = load_mastery_config()
+    except Exception as e:
+        print(f"Ошибка загрузки конфига мастерства: {e}")
+        mastery_config = None
+    
+    # Формируем данные профиля для встраивания в HTML
+    profile_data = {
+        "user_id": user_id,
+        "real_name": profile.get('real_name', '') if profile else '',
+        "psn_id": profile.get('psn_id', '') if profile else '',
+        "platforms": profile.get('platforms', []) if profile else [],
+        "modes": profile.get('modes', []) if profile else [],
+        "goals": profile.get('goals', []) if profile else [],
+        "difficulties": profile.get('difficulties', []) if profile else [],
+        "avatar_url": profile.get('avatar_url', '') if profile else '',
+        "mastery": mastery_levels,
+        "mastery_config": mastery_config
+    }
+    
+    # Встраиваем данные профиля напрямую в HTML (без JavaScript)
+    def format_array(arr):
+        if not arr or not isinstance(arr, list) or len(arr) == 0:
+            return '—'
+        return '\n'.join(arr)
+    
+    # Формируем значения для подстановки
+    real_name = profile_data.get('real_name', '') or '—'
+    psn_id = profile_data.get('psn_id', '') or '—'
+    
+    # Функция для создания HTML чипов
+    def create_chips_html(items, container_id):
+        if not items or len(items) == 0:
+            return '<div style="display: none;"></div>'
+        chips_html = ""
+        for item in items:
+            chips_html += f'<span class="chip">{item}</span>'
+        return f'<div id="{container_id}" class="chips-container">{chips_html}</div>'
+    
+    platforms_list = profile_data.get('platforms', [])
+    modes_list = profile_data.get('modes', [])
+    goals_list = profile_data.get('goals', [])
+    difficulties_list = profile_data.get('difficulties', [])
+    
+    # Подставляем данные напрямую в HTML
+    html_content = html_content.replace('<div id="v_real_name" class="value">—</div>', 
+                                       f'<div id="v_real_name" class="value">{real_name}</div>')
+    html_content = html_content.replace('<div id="v_psn_id" class="value">—</div>', 
+                                       f'<div id="v_psn_id" class="value">{psn_id}</div>')
+    
+    # Заменяем контейнеры для чипов
+    html_content = html_content.replace(
+        '<div id="v_platform_chips" class="chips-container"></div>',
+        create_chips_html(platforms_list, 'v_platform_chips')
+    )
+    html_content = html_content.replace(
+        '<div id="v_modes_chips" class="chips-container"></div>',
+        create_chips_html(modes_list, 'v_modes_chips')
+    )
+    html_content = html_content.replace(
+        '<div id="v_goals_chips" class="chips-container"></div>',
+        create_chips_html(goals_list, 'v_goals_chips')
+    )
+    html_content = html_content.replace(
+        '<div id="v_difficulty_chips" class="chips-container"></div>',
+        create_chips_html(difficulties_list, 'v_difficulty_chips')
+    )
+    
+    # Скрываем пустые div для value (они не нужны для чипов)
+    html_content = html_content.replace(
+        '<div id="v_platform" class="value"></div>',
+        '<div id="v_platform" class="value" style="display: none;"></div>'
+    )
+    html_content = html_content.replace(
+        '<div id="v_modes" class="value"></div>',
+        '<div id="v_modes" class="value" style="display: none;"></div>'
+    )
+    html_content = html_content.replace(
+        '<div id="v_goals" class="value"></div>',
+        '<div id="v_goals" class="value" style="display: none;"></div>'
+    )
+    html_content = html_content.replace(
+        '<div id="v_difficulty" class="value"></div>',
+        '<div id="v_difficulty" class="value" style="display: none;"></div>'
+    )
+    
+    # Обработка аватарки
+    avatar_url = profile_data.get('avatar_url', '')
+    if avatar_url:
+        if not avatar_url.startswith('http'):
+            # Определяем базовый URL (предполагаем localhost для скриншота)
+            base_url = "http://localhost:8000"
+            avatar_url = f"{base_url}{avatar_url}"
+        # Заменяем placeholder на изображение
+        avatar_html = f'''<img id="avatarImg" src="{avatar_url}" alt="Аватар" style="display: block;" />
+            <div class="avatar-placeholder" id="avatarPlaceholder" style="display: none;">+</div>'''
+        html_content = html_content.replace(
+            '<img id="avatarImg" src="" alt="Аватар" style="display: none;" />\n            <div class="avatar-placeholder" id="avatarPlaceholder" style="display: flex; align-items: center; justify-content: center; font-size: 32px; color: var(--muted);">+</div>',
+            avatar_html
+        )
+    
+    # Генерируем текстовый список мастерства
+    mastery_list = []
+    
+    if mastery_config and mastery_levels:
+        # Порядок категорий
+        category_order = ['solo', 'hellmode', 'raid', 'speedrun']
+        
+        for category_key in category_order:
+            current_level = mastery_levels.get(category_key, 0)
+            
+            # Пропускаем категории с нулевым уровнем
+            if current_level == 0:
+                continue
+            
+            # Находим категорию в конфиге
+            category = None
+            for cat in mastery_config.get('categories', []):
+                if cat.get('key') == category_key:
+                    category = cat
+                    break
+            
+            if not category:
+                continue
+            
+            max_levels = category.get('maxLevels', 0)
+            
+            # Находим данные уровня
+            level_data = None
+            for level in category.get('levels', []):
+                if level.get('level') == current_level:
+                    level_data = level
+                    break
+            
+            level_name = level_data.get('name', f'Уровень {current_level}') if level_data else f'Уровень {current_level}'
+            category_name = category.get('name', category_key)
+            
+            # Формат: "Категория (уровень/макс Уровень) - Название уровня"
+            mastery_item = f"{category_name} ({current_level}/{max_levels}) - {level_name}"
+            mastery_list.append(mastery_item)
+    
+    # Вставляем список мастерства
+    mastery_text = "\n".join(mastery_list) if mastery_list else "—"
+    html_content = html_content.replace(
+        '<div id="v_mastery" class="value lines">—</div>',
+        f'<div id="v_mastery" class="value lines">{mastery_text}</div>'
+    )
+    
+    # Добавляем скрипт для сигнала готовности (данные уже заполнены)
+    script_replacement = """
+        <script>
+            // Данные уже заполнены в HTML, просто сигнализируем готовность
+            (function() {
+                const readyEl = document.getElementById('profile-ready');
+                if (readyEl) {
+                    readyEl.textContent = 'ready';
+                    readyEl.setAttribute('data-ready', 'true');
+                }
+                
+                // Если есть аватарка, проверяем её загрузку
+                const avatarImg = document.getElementById('avatarImg');
+                if (avatarImg && avatarImg.src) {
+                    avatarImg.onload = function() {
+                        const readyEl = document.getElementById('profile-ready');
+                        if (readyEl) {
+                            readyEl.setAttribute('data-ready', 'true');
+                        }
+                    };
+                    avatarImg.onerror = function() {
+                        // Если аватарка не загрузилась, показываем placeholder
+                        avatarImg.style.display = 'none';
+                        const placeholder = document.getElementById('avatarPlaceholder');
+                        if (placeholder) {
+                            placeholder.style.display = 'flex';
+                        }
+                        const readyEl = document.getElementById('profile-ready');
+                        if (readyEl) {
+                            readyEl.setAttribute('data-ready', 'true');
+                        }
+                    };
+                    // Если изображение уже загружено
+                    if (avatarImg.complete) {
+                        const readyEl = document.getElementById('profile-ready');
+                        if (readyEl) {
+                            readyEl.setAttribute('data-ready', 'true');
+                        }
+                    }
+                } else {
+                    // Нет аватарки, страница готова
+                    const readyEl = document.getElementById('profile-ready');
+                    if (readyEl) {
+                        readyEl.setAttribute('data-ready', 'true');
+                    }
+                }
+                
+                // Мастерство теперь просто текст, не нужно ждать загрузки изображений
+                const readyElFinal = document.getElementById('profile-ready');
+                if (readyElFinal) {
+                    readyElFinal.setAttribute('data-ready', 'true');
+                }
+            })();
+        </script>
+    """
+    
+    # Заменяем placeholder script блок
+    html_content = re.sub(
+        r'<script>\s*// Placeholder.*?</script>',
+        script_replacement,
+        html_content,
+        flags=re.DOTALL
+    )
+    
+    # Если не нашли placeholder, добавляем скрипт перед закрывающим тегом body
+    if 'data-ready' not in html_content:
+        html_content = html_content.replace('</body>', script_replacement + '\n</body>')
+    
+    return html_content
+
+
+async def screenshot_profile(user_id: int, base_url: str = "http://localhost:8000") -> bytes:
+    """
+    Создает скриншот страницы профиля через Playwright.
+    
+    Args:
+        user_id: ID пользователя
+        base_url: Базовый URL сервера (по умолчанию localhost:8000)
+    
+    Returns:
+        PNG изображение в виде bytes
+    """
+    url = f"{base_url}/profile-preview/{user_id}"
+    
+    async with async_playwright() as p:
+        # Запускаем браузер в headless режиме
+        browser = await p.chromium.launch(headless=True)
+        
+        try:
+            # Создаем контекст с мобильным viewport
+            context = await browser.new_context(
+                viewport={"width": 375, "height": 812},
+                device_scale_factor=2,
+                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15"
+            )
+            
+            # Создаем страницу
+            page = await context.new_page()
+            
+            try:
+                # Переходим на страницу
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+                
+                # Ждем, пока данные профиля загрузятся и заполнятся
+                # Ожидаем либо появления элемента #profile-ready с атрибутом data-ready,
+                # либо проверяем, что данные заполнены
+                try:
+                    # Ждем появления элемента и заполнения данных
+                    await page.wait_for_function(
+                        """
+                        () => {
+                            const readyEl = document.getElementById('profile-ready');
+                            if (!readyEl) return false;
+                            
+                            // Проверяем, что данные заполнены (не прочерки)
+                            const realName = document.getElementById('v_real_name')?.textContent || '';
+                            const psnId = document.getElementById('v_psn_id')?.textContent || '';
+                            const chipsLoaded = document.querySelectorAll('.chip').length > 0;
+                            
+                            // Элемент готов И данные заполнены
+                            return readyEl.getAttribute('data-ready') === 'true' && 
+                                   (realName !== '—' || psnId !== '—') && 
+                                   (chipsLoaded || realName !== '—');
+                        }
+                        """,
+                        timeout=10000
+                    )
+                    # Дополнительная небольшая задержка для завершения рендеринга
+                    await page.wait_for_timeout(300)
+                except Exception as e:
+                    # Если не дождались, проверяем состояние страницы
+                    print(f"Warning: Timeout waiting for profile data: {e}")
+                    # Проверяем, есть ли хотя бы какие-то данные
+                    has_data = await page.evaluate("""
+                        () => {
+                            const realName = document.getElementById('v_real_name')?.textContent || '';
+                            const psnId = document.getElementById('v_psn_id')?.textContent || '';
+                            return realName !== '—' || psnId !== '—';
+                        }
+                    """)
+                    if not has_data:
+                        # Если данных нет, ждем еще
+                        await page.wait_for_timeout(2000)
+                        # Проверяем еще раз
+                        has_data = await page.evaluate("""
+                            () => {
+                                const realName = document.getElementById('v_real_name')?.textContent || '';
+                                const psnId = document.getElementById('v_psn_id')?.textContent || '';
+                                return realName !== '—' || psnId !== '—';
+                            }
+                        """)
+                        if not has_data:
+                            print("Warning: Profile data still not loaded after extended wait")
+                
+                # Делаем скриншот
+                screenshot_bytes = await page.screenshot(type="png", full_page=True)
+                
+                return screenshot_bytes
+                
+            finally:
+                await page.close()
+                await context.close()
+                
+        finally:
+            await browser.close()
+
+
+async def send_photo_to_telegram(chat_id: str, photo_buffer: bytes, caption: str = "", message_thread_id: Optional[int] = None) -> dict:
+    """
+    Отправляет фото в Telegram через Bot API используя requests.
+    
+    Args:
+        chat_id: ID чата для отправки
+        photo_buffer: Буфер с изображением (PNG bytes)
+        caption: Подпись к фото
+        message_thread_id: ID темы (если есть)
+    
+    Returns:
+        Результат запроса к Telegram API
+    """
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    
+    # Подготавливаем данные для отправки
+    files = {
+        'photo': ('profile.png', io.BytesIO(photo_buffer), 'image/png')
+    }
+    
+    data = {
+        'chat_id': chat_id,
+        'caption': caption,
+        'parse_mode': 'HTML'
+    }
+    
+    if message_thread_id:
+        data['message_thread_id'] = message_thread_id
+    
+    # Отправляем запрос
+    response = requests.post(url, files=files, data=data, timeout=30)
+    
+    if not response.ok:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Telegram API error: {response.text}"
+        )
+    
+    return response.json()
+
+
+@app.post("/api/send_profile/{user_id}")
+async def send_profile_screenshot(
+    user_id: int,
+    chat_id: str = Query(..., description="ID чата для отправки фото"),
+    message_thread_id: Optional[int] = Query(None, description="ID темы (если есть)"),
+    base_url: Optional[str] = Query(None, description="Базовый URL сервера (по умолчанию localhost:8000)")
+):
+    """
+    Создает скриншот профиля пользователя и отправляет его в Telegram.
+    
+    Args:
+        user_id: ID пользователя, чей профиль нужно отправить
+        chat_id: ID чата для отправки фото
+        message_thread_id: ID темы (опционально)
+        base_url: Базовый URL сервера (для создания скриншота)
+    
+    Returns:
+        JSON с результатом операции
+    """
+    try:
+        # Определяем базовый URL
+        if not base_url:
+            # Используем localhost для скриншота, так как Playwright работает локально
+            # Внешний API_BASE_URL может быть недоступен изнутри сервера
+            base_url = "http://localhost:8000"
+        
+        # Проверяем существование профиля
+        profile = get_user(DB_PATH, user_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Профиль не найден")
+        
+        # Создаем скриншот
+        screenshot_bytes = await screenshot_profile(user_id, base_url)
+        
+        # Формируем подпись
+        caption_parts = []
+        if profile.get('real_name'):
+            caption_parts.append(f"👤 <b>{profile['real_name']}</b>")
+        if profile.get('psn_id'):
+            caption_parts.append(f"🎮 PSN: {profile['psn_id']}")
+        
+        caption = "\n".join(caption_parts) if caption_parts else "👤 Профиль пользователя"
+        
+        # Отправляем фото в Telegram
+        result = await send_photo_to_telegram(
+            chat_id=chat_id,
+            photo_buffer=screenshot_bytes,
+            caption=caption,
+            message_thread_id=message_thread_id
+        )
+        
+        return {
+            "status": "ok",
+            "message": "Скриншот профиля успешно отправлен",
+            "telegram_result": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка при создании и отправке скриншота: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании скриншота: {str(e)}"
+        )
+
+
 @app.exception_handler(HTTPException)
 async def cors_exception_handler(request, exc):
     return JSONResponse(

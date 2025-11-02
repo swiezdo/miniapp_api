@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Профиль</title>
+    <style>
+        /* ========== ROOT: DESIGN TOKENS ========== */
+        :root {
+            /* Color Palette - почти черная тема */
+            --bg: #000000;
+            --fg: #ffffff;
+            --muted: #888888;
+            --accent: #2ea6ff;
+            --color-error: #ff4444;
+            --color-success: #4caf50;
+            --color-warning: #ff9800;
+            --color-text-secondary: var(--muted);
+            
+            /* Theme-adaptive colors - почти черные с минимальной прозрачностью */
+            --card-bg: rgba(20, 20, 20, 0.95);
+            --stroke-color: rgba(255, 255, 255, 0.1);
+            --elem-bg: rgba(30, 30, 30, 0.8);
+            --hover-bg: rgba(40, 40, 40, 0.9);
+            --color-border: rgba(255, 255, 255, 0.15);
+            
+            /* Typography Scale */
+            --fs-12: 12px;
+            --fs-13: 13px;
+            --fs-14: 14px;
+            --fs-15: 15px;
+            --fs-16: 16px;
+            --fs-18: 18px;
+            --fs-20: 20px;
+            --fs-22: 22px;
+            
+            --lh-tight: 1.15;
+            --lh-normal: 1.35;
+            --lh-base: 1.45;
+            
+            /* Spacing Scale */
+            --space-1: 4px;
+            --space-2: 8px;
+            --space-3: 12px;
+            --space-4: 16px;
+            --space-5: 20px;
+            --space-6: 24px;
+            --space-8: 32px;
+            
+            /* Border Radius */
+            --radius-sm: 10px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            
+            /* Telegram Theme Override - темная тема */
+            --tg-bg: var(--bg);
+            --tg-tx: var(--fg);
+            --tg-hint: var(--muted);
+            --safe-bottom: 0px;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        html, body {
+            height: 100%;
+            width: 100%;
+            overflow-x: hidden;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font: var(--fs-16) / var(--lh-base) system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+            background: #000000 !important;
+            color: #ffffff !important;
+            -webkit-font-smoothing: antialiased;
+            margin: 0;
+            padding: var(--space-4);
+            touch-action: manipulation;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        /* ========== CARD ========== */
+        .card {
+            background: rgba(15, 15, 15, 0.95) !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
+            border-radius: var(--radius-lg);
+            padding: var(--space-4);
+            margin: var(--space-4);
+            margin-bottom: var(--space-4);
+            position: relative;
+        }
+        
+        .card:last-child {
+            margin-bottom: 0;
+        }
+        
+        .card-title {
+            font-weight: 600;
+            font-size: var(--fs-18);
+            margin-bottom: var(--space-3);
+            color: var(--tg-tx);
+        }
+        
+        /* ========== AVATAR DISPLAY ========== */
+        .avatar-display {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.2) !important;
+            background: rgba(25, 25, 25, 0.9) !important;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            z-index: 10;
+        }
+        
+        .avatar-display img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        /* ========== GRID & FIELDS ========== */
+        .profile-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: var(--space-3);
+            margin-top: var(--space-4);
+        }
+        
+        .field.span-2 {
+            grid-column: 1 / -1;
+        }
+        
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-1);
+        }
+        
+        .field label {
+            font-size: var(--fs-12);
+            color: var(--tg-hint);
+            display: block;
+        }
+        
+        .value {
+            font-size: var(--fs-15);
+            word-break: break-word;
+            color: var(--tg-tx);
+        }
+        
+        .value.lines {
+            white-space: pre-line;
+        }
+        
+        /* Компактные чипы для списков */
+        .chips-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--space-1);
+            margin-top: var(--space-1);
+        }
+        
+        .chip {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: var(--fs-12);
+            color: var(--tg-tx);
+            white-space: nowrap;
+            line-height: 1.3;
+        }
+        
+        /* Стили для мастерства в виде списка */
+        .mastery-list {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-1);
+        }
+        
+        .mastery-item {
+            font-size: var(--fs-14);
+            color: var(--tg-tx);
+            line-height: 1.4;
+        }
+        
+        /* Элемент для сигнала готовности (скрыт) */
+        #profile-ready {
+            position: fixed;
+            top: -9999px;
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        /* ========== MASTERY BADGES ========== */
+        .list-buttons {
+            display: grid;
+            gap: var(--space-2);
+        }
+        
+        .badge-btn {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-3);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--color-border);
+            background: transparent;
+            color: var(--tg-tx);
+            cursor: default;
+            position: relative;
+            overflow: hidden;
+            min-height: calc(44px + var(--space-1));
+        }
+        
+        /* Полупрозрачный overlay для фоновых изображений */
+        .badge-btn[style*="background-image"]::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: var(--radius-lg);
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        /* Контент должен быть поверх overlay */
+        .badge-btn > * {
+            position: relative;
+            z-index: 2;
+        }
+        
+        .mastery-text-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: var(--space-1);
+            flex: 1;
+            z-index: 2;
+            position: relative;
+        }
+        
+        .mastery-category-name {
+            font-size: var(--fs-14);
+            color: var(--muted);
+            font-weight: 500;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 6px rgba(0, 0, 0, 0.45);
+        }
+        
+        .mastery-level-name {
+            font-size: var(--fs-16);
+            font-weight: 600;
+            color: var(--tg-tx);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 8px rgba(0, 0, 0, 0.5);
+            margin: 0;
+        }
+        
+        .mastery-progress-container {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            flex-shrink: 0;
+            z-index: 2;
+        }
+        
+        .mastery-icon {
+            width: 100%;
+            height: 100%;
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: contain;
+            filter: drop-shadow(0 0 6px rgba(212, 175, 55, 0.6)) drop-shadow(0 0 10px rgba(212, 175, 55, 0.35));
+            opacity: 0.95;
+        }
+        
+        .mastery-level-number {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--tg-tx);
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9), 0 0 8px rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+            line-height: 1;
+        }
+        
+        .mastery-progress-svg {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* Responsive */
+        @media (max-width: 640px) {
+            .profile-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <section class="card">
+        <h2 class="card-title">Профиль</h2>
+        
+        <div class="avatar-display" id="avatarDisplay">
+            <img id="avatarImg" src="" alt="Аватар" style="display: none;" />
+            <div class="avatar-placeholder" id="avatarPlaceholder" style="display: flex; align-items: center; justify-content: center; font-size: 32px; color: var(--muted);">+</div>
+        </div>
+        
+        <div class="profile-grid">
+            <div class="field">
+                <label>Имя</label>
+                <div id="v_real_name" class="value">—</div>
+            </div>
+            
+            <div class="field">
+                <label>Ник в PlayStation Network</label>
+                <div id="v_psn_id" class="value">—</div>
+            </div>
+            
+            <div class="field">
+                <label>Платформы</label>
+                <div id="v_platform" class="value"></div>
+                <div id="v_platform_chips" class="chips-container"></div>
+            </div>
+            
+            <div class="field">
+                <label>Режимы</label>
+                <div id="v_modes" class="value"></div>
+                <div id="v_modes_chips" class="chips-container"></div>
+            </div>
+            
+            <div class="field">
+                <label>Цели</label>
+                <div id="v_goals" class="value"></div>
+                <div id="v_goals_chips" class="chips-container"></div>
+            </div>
+            
+            <div class="field">
+                <label>Сложность</label>
+                <div id="v_difficulty" class="value"></div>
+                <div id="v_difficulty_chips" class="chips-container"></div>
+            </div>
+            
+            <div class="field span-2">
+                <label>Мастерство</label>
+                <div id="v_mastery" class="value lines">—</div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Элемент для сигнала готовности -->
+    <div id="profile-ready"></div>
+    
+    <!-- JavaScript будет встроен сервером -->
+    <script>
+        // Placeholder - будет заменен сервером
+    </script>
+</body>
+</html>
