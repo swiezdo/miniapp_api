@@ -162,7 +162,6 @@ async def options_handler(path: str, request: Request):
     """
     Глобальный обработчик OPTIONS запросов для CORS.
     """
-    print(f"🔍 Глобальный OPTIONS запрос для пути: /{path}")
     from fastapi.responses import Response
     return Response(
         status_code=200,
@@ -250,7 +249,6 @@ async def options_profile_get():
     """
     OPTIONS эндпоинт для CORS preflight запросов.
     """
-    print(f"🔍 OPTIONS /api/profile.get - ALLOWED_ORIGIN: {ALLOWED_ORIGIN}")
     from fastapi.responses import Response
     return Response(
         status_code=200,
@@ -268,7 +266,6 @@ async def options_profile_save():
     """
     OPTIONS эндпоинт для CORS preflight запросов.
     """
-    print(f"🔍 OPTIONS /api/profile.save - ALLOWED_ORIGIN: {ALLOWED_ORIGIN}")
     from fastapi.responses import Response
     return Response(
         status_code=200,
@@ -364,24 +361,12 @@ async def save_profile(
     }
 
     # Сохраняем профиль
-    try:
-        success = upsert_user(DB_PATH, user_id, profile_data)
-        
-        if not success:
-            print(f"❌ ОШИБКА: upsert_user вернул False для user_id={user_id}")
-            print(f"❌ Данные профиля: {profile_data}")
-            raise HTTPException(
-                status_code=500,
-                detail="Ошибка при сохранении профиля в базу данных"
-            )
-    except Exception as e:
-        print(f"❌ ОШИБКА при вызове upsert_user: {type(e).__name__}: {e}")
-        print(f"❌ Traceback:")
-        import traceback
-        traceback.print_exc()
+    success = upsert_user(DB_PATH, user_id, profile_data)
+
+    if not success:
         raise HTTPException(
             status_code=500,
-            detail=f"Ошибка при сохранении профиля: {str(e)}"
+            detail="Ошибка при сохранении профиля"
         )
 
     return {"status": "ok", "message": "Профиль успешно сохранен"}
@@ -923,8 +908,6 @@ async def update_build_endpoint(
     """
     Обновляет существующий билд.
     """
-    print(f"🔧 Обновление билда {build_id}, пользователь {user_id}")
-    print(f"📋 Полученные параметры: name={name[:20]}..., class={class_name}, photo_1={photo_1 is not None}, photo_2={photo_2 is not None}")
     
     # Проверяем что билд существует и принадлежит пользователю
     build = get_build(DB_PATH, build_id)
@@ -995,11 +978,7 @@ async def update_build_endpoint(
                     image1 = background
                 image1.save(photo_1_path, 'JPEG', quality=85, optimize=True)
                 build_data['photo_1'] = f"/builds/{build_id}/photo_1.jpg"
-                print(f"✅ Обновлено фото 1 для билда {build_id}, размер: {len(file_content)} байт")
-            else:
-                print(f"⚠️ Фото 1 пустое для билда {build_id}")
         except Exception as e:
-            print(f"❌ Ошибка обработки первого изображения для билда {build_id}: {e}")
             import traceback
             traceback.print_exc()
             raise HTTPException(
@@ -1026,11 +1005,7 @@ async def update_build_endpoint(
                     image2 = background
                 image2.save(photo_2_path, 'JPEG', quality=85, optimize=True)
                 build_data['photo_2'] = f"/builds/{build_id}/photo_2.jpg"
-                print(f"✅ Обновлено фото 2 для билда {build_id}, размер: {len(file_content)} байт")
-            else:
-                print(f"⚠️ Фото 2 пустое для билда {build_id}")
         except Exception as e:
-            print(f"❌ Ошибка обработки второго изображения для билда {build_id}: {e}")
             import traceback
             traceback.print_exc()
             raise HTTPException(
@@ -1038,7 +1013,6 @@ async def update_build_endpoint(
                 detail=f"Ошибка обработки второго изображения: {str(e)}"
             )
     
-    print(f"📝 Данные для обновления билда {build_id}: {list(build_data.keys())}")
     
     # Обновляем билд в БД
     success = update_build(DB_PATH, build_id, user_id, build_data)
@@ -1844,11 +1818,6 @@ async def cors_exception_handler(request, exc):
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Запуск Tsushima Mini App API...")
-    print(f"📁 База данных: {DB_PATH}")
-    print(f"🌐 Разрешенный origin: {ALLOWED_ORIGIN}")
-    print(f"🤖 Bot token: {BOT_TOKEN[:10]}..." if BOT_TOKEN else "❌ Bot token не найден")
-    
     uvicorn.run(
         "app:app",
         host="0.0.0.0",
