@@ -67,6 +67,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def filter_bot_requests(request: Request, call_next):
+    """
+    Фильтрует известные бот-запросы (WordPress, phpMyAdmin и т.д.).
+    Возвращает 404 без логирования для таких запросов.
+    """
+    path = request.url.path.lower()
+    
+    # Список известных бот-путей
+    bot_paths = [
+        '/wp-admin', '/wp-login', '/wp-content', '/wp-includes',
+        '/phpmyadmin', '/admin', '/administrator',
+        '/.env', '/config.php', '/setup-config.php',
+        '/wordpress', '/joomla', '/drupal',
+        '/xmlrpc.php', '/wp-cron.php', '/wp-trackback.php'
+    ]
+    
+    # Проверяем, является ли путь бот-запросом
+    if any(bot_path in path for bot_path in bot_paths):
+        # Возвращаем 404 без логирования
+        return Response(status_code=404, content="Not Found")
+    
+    return await call_next(request)
+
 # Инициализируем базу данных при запуске
 init_db(DB_PATH)
 
