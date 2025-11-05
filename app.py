@@ -5,24 +5,29 @@
 import os
 import shutil
 import json
-import time
 import requests
 import tempfile
 import sqlite3
 import io
+import traceback
+import re
 from fastapi import FastAPI, HTTPException, Depends, Header, Form, File, UploadFile, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from typing import Optional, List, Dict, Any
-from PIL import Image, ImageOps
+from PIL import Image
 from playwright.async_api import async_playwright
-import re
 
 # Импортируем наши модули
 from security import validate_init_data, get_user_id_from_init_data
-from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments, toggle_reaction, get_reactions
+from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments, toggle_reaction, get_reactions, update_avatar_url, update_build_photos
+from image_utils import process_image_for_upload, process_avatar_image, validate_image_file, temp_image_directory
+from telegram_utils import send_telegram_message, send_photos_to_telegram_group
+from user_utils import get_user_with_psn, format_profile_response
+from mastery_utils import find_category_by_key, parse_tags
+from mastery_config import load_mastery_config
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -45,101 +50,7 @@ TROPHY_GROUP_TOPIC_ID = os.getenv("TROPHY_GROUP_TOPIC_ID", "5675")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "swiezdo_testbot")
 
 # Удалены кеш и загрузка данных трофеев
-
-# Функции для работы с Telegram Bot API
-async def send_telegram_message(chat_id: str, text: str, reply_markup: dict = None, message_thread_id: str = None, reply_to_message_id: int = None):
-    """
-    Отправляет сообщение в Telegram через Bot API.
-    """
-    import aiohttp
-    
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    
-    data = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML"
-    }
-    
-    if message_thread_id:
-        data["message_thread_id"] = message_thread_id
-    
-    if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup)
-    
-    if reply_to_message_id:
-        data["reply_to_message_id"] = reply_to_message_id
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=data) as response:
-            return await response.json()
-
-async def send_telegram_photo(chat_id: str, photo_path: str, caption: str = "", reply_markup: dict = None, message_thread_id: str = None):
-    """
-    Отправляет фотографию в Telegram через Bot API.
-    """
-    import aiohttp
-    
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    
-    with open(photo_path, 'rb') as photo_file:
-        data = aiohttp.FormData()
-        data.add_field('chat_id', chat_id)
-        data.add_field('photo', photo_file, filename='photo.jpg')
-        data.add_field('caption', caption)
-        data.add_field('parse_mode', 'HTML')
-        
-        if message_thread_id:
-            data.add_field('message_thread_id', message_thread_id)
-        
-        if reply_markup:
-            data.add_field('reply_markup', json.dumps(reply_markup))
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=data) as response:
-                return await response.json()
-
-async def send_telegram_media_group(chat_id: str, photo_paths: List[str], caption: str = "", message_thread_id: str = None):
-    """
-    Отправляет группу фотографий в Telegram через Bot API.
-    """
-    import aiohttp
-    
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMediaGroup"
-    
-    media = []
-    for i, photo_path in enumerate(photo_paths):
-        media.append({
-            "type": "photo",
-            "media": f"attach://photo_{i}"
-        })
-    
-    # Открываем все файлы
-    photo_files = []
-    try:
-        for photo_path in photo_paths:
-            photo_files.append(open(photo_path, 'rb'))
-        
-        data = aiohttp.FormData()
-        data.add_field('chat_id', chat_id)
-        data.add_field('media', json.dumps(media))
-        data.add_field('parse_mode', 'HTML')
-        
-        if message_thread_id:
-            data.add_field('message_thread_id', message_thread_id)
-        
-        # Добавляем файлы в FormData
-        for i, photo_file in enumerate(photo_files):
-            data.add_field(f'photo_{i}', photo_file, filename=f'photo_{i}.jpg')
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=data) as response:
-                result = await response.json()
-                return result
-    finally:
-        # Закрываем все файлы
-        for photo_file in photo_files:
-            photo_file.close()
+# Функции для работы с Telegram Bot API перенесены в telegram_utils.py
 
 # Проверяем обязательные переменные
 if not BOT_TOKEN:
@@ -172,7 +83,6 @@ async def options_handler(path: str, request: Request):
     """
     Глобальный обработчик OPTIONS запросов для CORS.
     """
-    from fastapi.responses import Response
     return Response(
         status_code=200,
         headers={
@@ -249,43 +159,7 @@ async def health_check():
 
 
 # Эндпоинты трофеев удалены
-
-
-
-
-
-@app.options("/api/profile.get")
-async def options_profile_get():
-    """
-    OPTIONS эндпоинт для CORS preflight запросов.
-    """
-    from fastapi.responses import Response
-    return Response(
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-            "Access-Control-Allow-Credentials": "true",
-        }
-    )
-
-
-@app.options("/api/profile.save")
-async def options_profile_save():
-    """
-    OPTIONS эндпоинт для CORS preflight запросов.
-    """
-    from fastapi.responses import Response
-    return Response(
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-            "Access-Control-Allow-Credentials": "true",
-        }
-    )
+# Дублирующиеся OPTIONS handlers удалены - используется глобальный handler
 
 
 @app.get("/api/profile.get")
@@ -300,26 +174,7 @@ async def get_profile(user_id: int = Depends(get_current_user)):
         JSON с данными профиля или 404 если профиль не найден
     """
     profile = get_user(DB_PATH, user_id)
-    
-    if not profile:
-        raise HTTPException(
-            status_code=404,
-            detail="Профиль не найден"
-        )
-    
-    # Убираем служебные поля из ответа
-    response_data = {
-        "user_id": user_id,  # Нужен для загрузки аватарки на фронтенде
-        "real_name": profile.get("real_name", ""),
-        "psn_id": profile.get("psn_id", ""),
-        "platforms": profile.get("platforms", []),
-        "modes": profile.get("modes", []),
-        "goals": profile.get("goals", []),
-        "difficulties": profile.get("difficulties", []),
-        "avatar_url": profile.get("avatar_url")
-    }
-    
-    return response_data
+    return format_profile_response(profile, user_id)
 
 
 @app.post("/api/profile.save")
@@ -451,26 +306,7 @@ async def get_user_profile(
         JSON с данными профиля или 404 если профиль не найден
     """
     profile = get_user(DB_PATH, target_user_id)
-    
-    if not profile:
-        raise HTTPException(
-            status_code=404,
-            detail="Профиль пользователя не найден"
-        )
-    
-    # Убираем служебные поля из ответа
-    response_data = {
-        "user_id": profile.get("user_id"),
-        "real_name": profile.get("real_name", ""),
-        "psn_id": profile.get("psn_id", ""),
-        "platforms": profile.get("platforms", []),
-        "modes": profile.get("modes", []),
-        "goals": profile.get("goals", []),
-        "difficulties": profile.get("difficulties", []),
-        "avatar_url": profile.get("avatar_url")
-    }
-    
-    return response_data
+    return format_profile_response(profile, target_user_id)
 
 
 @app.get("/api/stats")
@@ -515,7 +351,7 @@ async def upload_avatar(
         )
     
     # Валидация типа файла
-    if not avatar.content_type or not avatar.content_type.startswith('image/'):
+    if not validate_image_file(avatar):
         raise HTTPException(
             status_code=400,
             detail="Разрешены только изображения"
@@ -533,42 +369,12 @@ async def upload_avatar(
         # Открываем изображение через Pillow
         image = Image.open(avatar.file)
         
-        # Исправляем ориентацию согласно EXIF-метаданным
-        image = ImageOps.exif_transpose(image)
-        
-        # Квадратная обрезка по центру
-        width, height = image.size
-        min_dimension = min(width, height)
-        left = (width - min_dimension) // 2
-        top = (height - min_dimension) // 2
-        right = left + min_dimension
-        bottom = top + min_dimension
-        image = image.crop((left, top, right, bottom))
-        
-        # Ресайз до 300x300
-        image = image.resize((300, 300), Image.Resampling.LANCZOS)
-        
-        # Конвертируем в RGB если нужно
-        if image.mode in ('RGBA', 'LA', 'P'):
-            background = Image.new('RGB', image.size, (255, 255, 255))
-            if image.mode == 'P':
-                image = image.convert('RGBA')
-            background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
-            image = background
-        
-        # Сохраняем как JPEG
-        image.save(avatar_path, 'JPEG', quality=85, optimize=True)
+        # Обрабатываем аватарку (обрезка, ресайз, конвертация)
+        process_avatar_image(image, avatar_path)
         
         # Обновляем avatar_url в БД
         avatar_url = f"/users/{user_id}/avatar.jpg"
-        
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE users SET avatar_url = ? WHERE user_id = ?
-        ''', (avatar_url, user_id))
-        conn.commit()
-        conn.close()
+        update_avatar_url(DB_PATH, user_id, avatar_url)
         
         return {
             "status": "ok",
@@ -622,19 +428,7 @@ async def create_build_endpoint(
     Создает новый билд с загрузкой изображений.
     """
     # Получаем профиль пользователя для получения psn_id
-    user_profile = get_user(DB_PATH, user_id)
-    if not user_profile:
-        raise HTTPException(
-            status_code=404,
-            detail="Профиль пользователя не найден"
-        )
-    
-    author = user_profile.get('psn_id', '')
-    if not author:
-        raise HTTPException(
-            status_code=400,
-            detail="PSN ID не указан в профиле"
-        )
+    user_profile, author = get_user_with_psn(DB_PATH, user_id)
     
     # Валидация названия
     if not name or not name.strip():
@@ -650,21 +444,8 @@ async def create_build_endpoint(
             detail="Класс обязателен"
         )
     
-    # Парсим теги (может быть JSON строка или строка через запятую)
-    try:
-        import json
-        # Пытаемся распарсить как JSON
-        if tags.startswith('[') and tags.endswith(']'):
-            tags_list = json.loads(tags)
-        else:
-            # Иначе парсим как строку через запятую
-            tags_list = [t.strip() for t in tags.split(',') if t.strip()]
-    except:
-        # Если не удалось распарсить, пытаемся как строку через запятую
-        try:
-            tags_list = [t.strip() for t in tags.split(',') if t.strip()] if tags else []
-        except:
-            tags_list = []
+    # Парсим теги
+    tags_list = parse_tags(tags)
     
     # Создаем временный билд для получения build_id
     build_data = {
@@ -695,44 +476,20 @@ async def create_build_endpoint(
         # Обработка первого изображения
         photo_1_path = os.path.join(builds_dir, 'photo_1.jpg')
         image1 = Image.open(photo_1.file)
-        # Исправляем ориентацию согласно EXIF-метаданным
-        image1 = ImageOps.exif_transpose(image1)
-        # Конвертируем в RGB если нужно (PNG с альфа-каналом)
-        if image1.mode in ('RGBA', 'LA', 'P'):
-            background = Image.new('RGB', image1.size, (255, 255, 255))
-            if image1.mode == 'P':
-                image1 = image1.convert('RGBA')
-            background.paste(image1, mask=image1.split()[-1] if image1.mode == 'RGBA' else None)
-            image1 = background
-        image1.save(photo_1_path, 'JPEG', quality=85, optimize=True)
+        process_image_for_upload(image1, photo_1_path)
         photo_1.file.seek(0)  # Возвращаем курсор
         
         # Обработка второго изображения
         photo_2_path = os.path.join(builds_dir, 'photo_2.jpg')
         image2 = Image.open(photo_2.file)
-        # Исправляем ориентацию согласно EXIF-метаданным
-        image2 = ImageOps.exif_transpose(image2)
-        if image2.mode in ('RGBA', 'LA', 'P'):
-            background = Image.new('RGB', image2.size, (255, 255, 255))
-            if image2.mode == 'P':
-                image2 = image2.convert('RGBA')
-            background.paste(image2, mask=image2.split()[-1] if image2.mode == 'RGBA' else None)
-            image2 = background
-        image2.save(photo_2_path, 'JPEG', quality=85, optimize=True)
+        process_image_for_upload(image2, photo_2_path)
         
         # Обновляем пути к изображениям в БД
         photo_1_url = f"/builds/{build_id}/photo_1.jpg"
         photo_2_url = f"/builds/{build_id}/photo_2.jpg"
         
         # Обновляем билд с путями
-        import sqlite3
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE builds SET photo_1 = ?, photo_2 = ? WHERE build_id = ?
-        ''', (photo_1_url, photo_2_url, build_id))
-        conn.commit()
-        conn.close()
+        update_build_photos(DB_PATH, build_id, photo_1_url, photo_2_url)
         
     except Exception as e:
         print(f"Ошибка обработки изображений: {e}")
@@ -947,14 +704,7 @@ async def update_build_endpoint(
         )
     
     # Парсим теги
-    try:
-        import json
-        if tags.startswith('[') and tags.endswith(']'):
-            tags_list = json.loads(tags)
-        else:
-            tags_list = [t.strip() for t in tags.split(',') if t.strip()]
-    except:
-        tags_list = [t.strip() for t in tags.split(',') if t.strip()] if tags else []
+    tags_list = parse_tags(tags)
     
     # Подготавливаем данные для обновления
     build_data = {
@@ -968,55 +718,40 @@ async def update_build_endpoint(
     builds_dir = os.path.join(os.path.dirname(DB_PATH), 'builds', str(build_id))
     os.makedirs(builds_dir, exist_ok=True)
     
-    # Проверяем наличие файлов
+    # Обрабатываем первое изображение если передано
     if photo_1:
         try:
-            # Читаем содержимое файла для проверки
-            photo_1.file.seek(0)
-            file_content = photo_1.file.read()
-            photo_1.file.seek(0)
+            # Проверяем что файл не пустой (используем размер файла)
+            photo_1.file.seek(0, 2)  # Переходим в конец файла
+            file_size = photo_1.file.tell()
+            photo_1.file.seek(0)  # Возвращаемся в начало
             
-            if len(file_content) > 0:
+            if file_size > 0:
                 photo_1_path = os.path.join(builds_dir, 'photo_1.jpg')
                 image1 = Image.open(photo_1.file)
-                image1 = ImageOps.exif_transpose(image1)
-                if image1.mode in ('RGBA', 'LA', 'P'):
-                    background = Image.new('RGB', image1.size, (255, 255, 255))
-                    if image1.mode == 'P':
-                        image1 = image1.convert('RGBA')
-                    background.paste(image1, mask=image1.split()[-1] if image1.mode == 'RGBA' else None)
-                    image1 = background
-                image1.save(photo_1_path, 'JPEG', quality=85, optimize=True)
+                process_image_for_upload(image1, photo_1_path)
                 build_data['photo_1'] = f"/builds/{build_id}/photo_1.jpg"
         except Exception as e:
-            import traceback
             traceback.print_exc()
             raise HTTPException(
                 status_code=500,
                 detail=f"Ошибка обработки первого изображения: {str(e)}"
             )
     
+    # Обрабатываем второе изображение если передано
     if photo_2:
         try:
-            # Читаем содержимое файла для проверки
-            photo_2.file.seek(0)
-            file_content = photo_2.file.read()
-            photo_2.file.seek(0)
+            # Проверяем что файл не пустой (используем размер файла)
+            photo_2.file.seek(0, 2)  # Переходим в конец файла
+            file_size = photo_2.file.tell()
+            photo_2.file.seek(0)  # Возвращаемся в начало
             
-            if len(file_content) > 0:
+            if file_size > 0:
                 photo_2_path = os.path.join(builds_dir, 'photo_2.jpg')
                 image2 = Image.open(photo_2.file)
-                image2 = ImageOps.exif_transpose(image2)
-                if image2.mode in ('RGBA', 'LA', 'P'):
-                    background = Image.new('RGB', image2.size, (255, 255, 255))
-                    if image2.mode == 'P':
-                        image2 = image2.convert('RGBA')
-                    background.paste(image2, mask=image2.split()[-1] if image2.mode == 'RGBA' else None)
-                    image2 = background
-                image2.save(photo_2_path, 'JPEG', quality=85, optimize=True)
+                process_image_for_upload(image2, photo_2_path)
                 build_data['photo_2'] = f"/builds/{build_id}/photo_2.jpg"
         except Exception as e:
-            import traceback
             traceback.print_exc()
             raise HTTPException(
                 status_code=500,
@@ -1236,19 +971,7 @@ async def submit_feedback(
     Отправляет отзыв/баг-репорт в админскую группу.
     """
     # Получаем профиль пользователя для получения psn_id
-    user_profile = get_user(DB_PATH, user_id)
-    if not user_profile:
-        raise HTTPException(
-            status_code=404,
-            detail="Профиль пользователя не найден"
-        )
-    
-    psn_id = user_profile.get('psn_id', '')
-    if not psn_id:
-        raise HTTPException(
-            status_code=400,
-            detail="PSN ID не указан в профиле"
-        )
+    user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
     
     # Валидация описания
     if not description or not description.strip():
@@ -1267,53 +990,11 @@ async def submit_feedback(
     # Проверяем что все файлы - изображения
     if photos:
         for photo in photos:
-            if not photo.content_type or not photo.content_type.startswith('image/'):
+            if not validate_image_file(photo):
                 raise HTTPException(
                     status_code=400,
                     detail="Разрешены только изображения"
                 )
-    
-    # Создаем временную директорию для фотографий
-    temp_dir = None
-    photo_paths = []
-    
-    try:
-        if photos and len(photos) > 0:
-            temp_dir = tempfile.mkdtemp(prefix='feedback_')
-            
-            # Обрабатываем и сохраняем изображения
-            for i, photo in enumerate(photos):
-                photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
-                
-                # Открываем изображение через Pillow
-                image = Image.open(photo.file)
-                
-                # Исправляем ориентацию согласно EXIF-метаданным
-                image = ImageOps.exif_transpose(image)
-                
-                # Конвертируем в RGB если нужно
-                if image.mode in ('RGBA', 'LA', 'P'):
-                    background = Image.new('RGB', image.size, (255, 255, 255))
-                    if image.mode == 'P':
-                        image = image.convert('RGBA')
-                    background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
-                    image = background
-                
-                # Сохраняем как JPEG
-                image.save(photo_path, 'JPEG', quality=85, optimize=True)
-                photo_paths.append(photo_path)
-                
-                # Возвращаем курсор файла
-                photo.file.seek(0)
-    
-    except Exception as e:
-        # Удаляем временную директорию при ошибке
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ошибка обработки изображений: {str(e)}"
-        )
     
     # Формируем сообщение для группы
     message_text = f"""💬 <b>Новый отзыв/баг-репорт</b>
@@ -1324,45 +1005,41 @@ async def submit_feedback(
 {description.strip()}
 """
     
-    # Отправляем уведомление в группу БЕЗ message_thread_id (в основную тему)
+    # Обрабатываем и отправляем фотографии
+    photo_paths = []
     try:
-        if len(photo_paths) == 1:
-            # Одна фотография - отправляем как фото с подписью
-            await send_telegram_photo(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                photo_path=photo_paths[0],
-                caption=message_text
-            )
-        elif len(photo_paths) > 1:
-            # Несколько фотографий - сначала текст, потом медиагруппа
-            await send_telegram_message(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                text=message_text
-            )
-            
-            # Затем отправляем медиагруппу с фото
-            await send_telegram_media_group(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                photo_paths=photo_paths
-            )
-        else:
-            # Нет фотографий - только текстовое сообщение
-            await send_telegram_message(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                text=message_text
-            )
-    
+        if photos and len(photos) > 0:
+            with temp_image_directory(prefix='feedback_') as temp_dir:
+                # Обрабатываем и сохраняем изображения
+                for i, photo in enumerate(photos):
+                    photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
+                    
+                    # Открываем изображение через Pillow
+                    image = Image.open(photo.file)
+                    
+                    # Обрабатываем изображение
+                    process_image_for_upload(image, photo_path)
+                    photo_paths.append(photo_path)
+                    
+                    # Возвращаем курсор файла
+                    photo.file.seek(0)
+                
+                # Отправляем уведомление в группу БЕЗ message_thread_id (в основную тему)
+                try:
+                    await send_photos_to_telegram_group(
+                        bot_token=BOT_TOKEN,
+                        chat_id=TROPHY_GROUP_CHAT_ID,
+                        photo_paths=photo_paths,
+                        message_text=message_text
+                    )
+                except Exception as e:
+                    print(f"Ошибка отправки отзыва в группу: {e}")
+                    # Не прерываем выполнение, но логируем ошибку
     except Exception as e:
-        print(f"Ошибка отправки отзыва в группу: {e}")
-        # Не прерываем выполнение, но логируем ошибку
-    
-    finally:
-        # Удаляем временную директорию
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception as e:
-                print(f"Ошибка удаления временной директории: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка обработки изображений: {str(e)}"
+        )
     
     return {
         "status": "ok",
@@ -1405,10 +1082,6 @@ async def get_mastery_levels(
         )
 
 
-# Импортируем функцию загрузки конфига из отдельного модуля
-from mastery_config import load_mastery_config
-
-
 @app.post("/api/mastery.submitApplication")
 async def submit_mastery_application(
     user_id: int = Depends(get_current_user),
@@ -1422,19 +1095,7 @@ async def submit_mastery_application(
     Отправляет заявку на повышение уровня мастерства в админскую группу.
     """
     # Получаем профиль пользователя для получения psn_id
-    user_profile = get_user(DB_PATH, user_id)
-    if not user_profile:
-        raise HTTPException(
-            status_code=404,
-            detail="Профиль пользователя не найден"
-        )
-    
-    psn_id = user_profile.get('psn_id', '')
-    if not psn_id:
-        raise HTTPException(
-            status_code=400,
-            detail="PSN ID не указан в профиле"
-        )
+    user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
     
     # Загружаем конфиг мастерства
     try:
@@ -1446,11 +1107,7 @@ async def submit_mastery_application(
         )
     
     # Находим категорию в конфиге
-    category = None
-    for cat in config.get('categories', []):
-        if cat.get('key') == category_key:
-            category = cat
-            break
+    category = find_category_by_key(config, category_key)
     
     if not category:
         raise HTTPException(
@@ -1475,7 +1132,7 @@ async def submit_mastery_application(
     
     # Проверяем что все файлы - изображения
     for photo in photos:
-        if not photo.content_type or not photo.content_type.startswith('image/'):
+        if not validate_image_file(photo):
             raise HTTPException(
                 status_code=400,
                 detail="Разрешены только изображения"
@@ -1508,47 +1165,6 @@ async def submit_mastery_application(
         raise HTTPException(
             status_code=400,
             detail=f"Уровень {next_level} не найден в конфиге для категории {category_key}"
-        )
-    
-    # Создаем временную директорию для фотографий
-    temp_dir = None
-    photo_paths = []
-    
-    try:
-        temp_dir = tempfile.mkdtemp(prefix='mastery_app_')
-        
-        # Обрабатываем и сохраняем изображения
-        for i, photo in enumerate(photos):
-            photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
-            
-            # Открываем изображение через Pillow
-            image = Image.open(photo.file)
-            
-            # Исправляем ориентацию согласно EXIF-метаданным
-            image = ImageOps.exif_transpose(image)
-            
-            # Конвертируем в RGB если нужно
-            if image.mode in ('RGBA', 'LA', 'P'):
-                background = Image.new('RGB', image.size, (255, 255, 255))
-                if image.mode == 'P':
-                    image = image.convert('RGBA')
-                background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
-                image = background
-            
-            # Сохраняем как JPEG
-            image.save(photo_path, 'JPEG', quality=85, optimize=True)
-            photo_paths.append(photo_path)
-            
-            # Возвращаем курсор файла
-            photo.file.seek(0)
-    
-    except Exception as e:
-        # Удаляем временную директорию при ошибке
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ошибка обработки изображений: {str(e)}"
         )
     
     # Формируем сообщение для группы
@@ -1590,51 +1206,43 @@ async def submit_mastery_application(
         ]
     }
     
-    # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
+    # Обрабатываем и отправляем фотографии
     try:
-        if len(photo_paths) == 1:
-            # Одна фотография - отправляем как фото с подписью и кнопками
-            await send_telegram_photo(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                photo_path=photo_paths[0],
-                caption=message_text,
-                reply_markup=reply_markup,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID
-            )
-        else:
-            # Несколько фотографий - сначала медиагруппа, потом текст с кнопками как ответ
-            media_group_result = await send_telegram_media_group(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                photo_paths=photo_paths,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID
-            )
+        with temp_image_directory(prefix='mastery_app_') as temp_dir:
+            photo_paths = []
             
-            # Получаем message_id первого сообщения из медиагруппы
-            reply_to_message_id = None
-            if media_group_result.get('ok') and media_group_result.get('result'):
-                # Первое сообщение в медиагруппе - это первое фото
-                reply_to_message_id = media_group_result['result'][0].get('message_id')
+            # Обрабатываем и сохраняем изображения
+            for i, photo in enumerate(photos):
+                photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
+                
+                # Открываем изображение через Pillow
+                image = Image.open(photo.file)
+                
+                # Обрабатываем изображение
+                process_image_for_upload(image, photo_path)
+                photo_paths.append(photo_path)
+                
+                # Возвращаем курсор файла
+                photo.file.seek(0)
             
-            # Отправляем текстовое сообщение с кнопками как ответ на первое фото
-            await send_telegram_message(
-                chat_id=TROPHY_GROUP_CHAT_ID,
-                text=message_text,
-                reply_markup=reply_markup,
-                message_thread_id=TROPHY_GROUP_TOPIC_ID,
-                reply_to_message_id=reply_to_message_id
-            )
-    
-    except Exception as e:
-        print(f"Ошибка отправки заявки в группу: {e}")
-        # Не прерываем выполнение, но логируем ошибку
-    
-    finally:
-        # Удаляем временную директорию
-        if temp_dir and os.path.exists(temp_dir):
+            # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
             try:
-                shutil.rmtree(temp_dir)
+                await send_photos_to_telegram_group(
+                    bot_token=BOT_TOKEN,
+                    chat_id=TROPHY_GROUP_CHAT_ID,
+                    photo_paths=photo_paths,
+                    message_text=message_text,
+                    reply_markup=reply_markup,
+                    message_thread_id=TROPHY_GROUP_TOPIC_ID
+                )
             except Exception as e:
-                print(f"Ошибка удаления временной директории: {e}")
+                print(f"Ошибка отправки заявки в группу: {e}")
+                # Не прерываем выполнение, но логируем ошибку
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка обработки изображений: {str(e)}"
+        )
     
     return {
         "status": "ok",
@@ -1673,7 +1281,7 @@ async def approve_mastery_application(
         raise HTTPException(status_code=401, detail="Неавторизованный запрос")
     
     # Импортируем функции для работы с БД
-    from db import set_mastery, get_user, get_mastery
+    from db import set_mastery, get_mastery
     
     # Получаем текущий уровень пользователя из БД
     mastery_data = get_mastery(DB_PATH, user_id)
@@ -1708,16 +1316,13 @@ async def approve_mastery_application(
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
     
     # Находим категорию и уровень в конфиге
-    category = None
+    category = find_category_by_key(config, category_key)
     level_data = None
-    for cat in config.get('categories', []):
-        if cat.get('key') == category_key:
-            category = cat
-            for level in cat.get('levels', []):
-                if level.get('level') == next_level:
-                    level_data = level
-                    break
-            break
+    if category:
+        for level in category.get('levels', []):
+            if level.get('level') == next_level:
+                level_data = level
+                break
     
     category_name = category.get('name', category_key) if category else category_key
     level_name = level_data.get('name', f'Уровень {next_level}') if level_data else f'Уровень {next_level}'
@@ -1732,6 +1337,7 @@ async def approve_mastery_application(
 📊 <b>Текущий уровень:</b> Уровень {next_level} — {level_name}"""
         
         await send_telegram_message(
+            bot_token=BOT_TOKEN,
             chat_id=str(user_id),
             text=user_notification
         )
@@ -1770,9 +1376,6 @@ async def reject_mastery_application(
     if not verify_bot_authorization(authorization):
         raise HTTPException(status_code=401, detail="Неавторизованный запрос")
     
-    # Импортируем функции для работы с БД
-    from db import get_user
-    
     # Получаем информацию о пользователе
     user_profile = get_user(DB_PATH, user_id)
     if not user_profile:
@@ -1785,16 +1388,13 @@ async def reject_mastery_application(
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
     
     # Находим категорию и уровень в конфиге
-    category = None
+    category = find_category_by_key(config, category_key)
     level_data = None
-    for cat in config.get('categories', []):
-        if cat.get('key') == category_key:
-            category = cat
-            for level in cat.get('levels', []):
-                if level.get('level') == next_level:
-                    level_data = level
-                    break
-            break
+    if category:
+        for level in category.get('levels', []):
+            if level.get('level') == next_level:
+                level_data = level
+                break
     
     category_name = category.get('name', category_key) if category else category_key
     level_name = level_data.get('name', f'Уровень {next_level}') if level_data else f'Уровень {next_level}'
@@ -1809,6 +1409,7 @@ async def reject_mastery_application(
 Причина: {reason}"""
         
         await send_telegram_message(
+            bot_token=BOT_TOKEN,
             chat_id=str(user_id),
             text=user_notification
         )
@@ -1851,7 +1452,6 @@ async def get_profile_preview(user_id: int):
     
     # Загружаем конфиг мастерства
     try:
-        from mastery_config import load_mastery_config
         mastery_config = load_mastery_config()
     except Exception as e:
         print(f"Ошибка загрузки конфига мастерства: {e}")

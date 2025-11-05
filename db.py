@@ -1328,4 +1328,73 @@ def get_reactions(db_path: str, build_id: int, user_id: Optional[int] = None) ->
             'dislikes_count': 0,
             'current_user_reaction': None
         }
+
+
+def update_avatar_url(db_path: str, user_id: int, avatar_url: str) -> bool:
+    """
+    Обновляет avatar_url для пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        avatar_url: URL аватарки
+    
+    Returns:
+        True при успешном обновлении, иначе False
+    """
+    try:
+        if not os.path.exists(db_path):
+            return False
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE users SET avatar_url = ? WHERE user_id = ?
+        ''', (avatar_url, user_id))
+        
+        success = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        
+        return success
+        
+    except Exception as e:
+        print(f"Ошибка обновления avatar_url: {e}")
+        return False
+
+
+def update_build_photos(db_path: str, build_id: int, photo_1_url: str, photo_2_url: str) -> bool:
+    """
+    Обновляет пути к фотографиям билда.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        build_id: ID билда
+        photo_1_url: URL первого фото
+        photo_2_url: URL второго фото
+    
+    Returns:
+        True при успешном обновлении, иначе False
+    """
+    try:
+        if not os.path.exists(db_path):
+            return False
+        
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE builds SET photo_1 = ?, photo_2 = ? WHERE build_id = ?
+        ''', (photo_1_url, photo_2_url, build_id))
+        
+        success = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        
+        return success
+        
+    except Exception as e:
+        print(f"Ошибка обновления фото билда: {e}")
+        return False
         
