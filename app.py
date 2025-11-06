@@ -24,7 +24,7 @@ from playwright.async_api import async_playwright
 from security import validate_init_data, get_user_id_from_init_data
 from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments, toggle_reaction, get_reactions, update_avatar_url, update_build_photos
 from image_utils import process_image_for_upload, process_avatar_image, validate_image_file, temp_image_directory
-from telegram_utils import send_telegram_message, send_photos_to_telegram_group
+from telegram_utils import send_telegram_message, send_photos_to_telegram_group, get_chat_member
 from user_utils import get_user_with_psn, format_profile_response
 from mastery_utils import find_category_by_key, parse_tags
 from mastery_config import load_mastery_config
@@ -48,6 +48,8 @@ DB_PATH = os.getenv("DB_PATH", "/root/miniapp_api/app.db")
 TROPHY_GROUP_CHAT_ID = os.getenv("TROPHY_GROUP_CHAT_ID", "-1002348168326")
 TROPHY_GROUP_TOPIC_ID = os.getenv("TROPHY_GROUP_TOPIC_ID", "5675")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "swiezdo_testbot")
+# ID основной группы (используется для проверки участников)
+GROUP_ID = os.getenv("GROUP_ID", "-1002365374672")
 
 # Удалены кеш и загрузка данных трофеев
 # Функции для работы с Telegram Bot API перенесены в telegram_utils.py
@@ -332,6 +334,58 @@ async def get_user_profile(
     """
     profile = get_user(DB_PATH, target_user_id)
     return format_profile_response(profile, target_user_id)
+
+
+@app.get("/api/user.checkGroupMembership")
+async def check_group_membership(user_id: int = Depends(get_current_user)):
+    """
+    Проверяет, является ли пользователь участником основной группы.
+    
+    Args:
+        user_id: ID пользователя (из dependency)
+    
+    Returns:
+        JSON с информацией о статусе участия в группе
+    """
+    try:
+        # Получаем информацию об участнике через Telegram Bot API
+        result = await get_chat_member(
+            bot_token=BOT_TOKEN,
+            chat_id=GROUP_ID,
+            user_id=user_id
+        )
+        
+        # Проверяем результат запроса
+        if not result.get('ok'):
+            # Если запрос не успешен, возвращаем ошибку
+            error_code = result.get('error_code', 500)
+            error_description = result.get('description', 'Неизвестная ошибка')
+            raise HTTPException(
+                status_code=error_code if error_code < 600 else 500,
+                detail=f"Ошибка проверки участника: {error_description}"
+            )
+        
+        # Извлекаем статус участника
+        chat_member = result.get('result', {})
+        status = chat_member.get('status', 'unknown')
+        
+        # Определяем, является ли пользователь участником группы
+        # Участниками считаются: member, administrator, creator, restricted
+        is_member = status in ['member', 'administrator', 'creator', 'restricted']
+        
+        return {
+            "is_member": is_member,
+            "status": status
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка проверки участника в группе: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при проверке участника в группе: {str(e)}"
+        )
 
 
 @app.get("/api/stats")

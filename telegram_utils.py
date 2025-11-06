@@ -216,3 +216,31 @@ async def send_photos_to_telegram_group(
             message_thread_id=message_thread_id
         )
 
+
+async def get_chat_member(
+    bot_token: str,
+    chat_id: str,
+    user_id: int
+) -> dict:
+    """
+    Получает информацию об участнике чата через Telegram Bot API.
+    
+    Args:
+        bot_token: Токен бота
+        chat_id: ID чата (группы)
+        user_id: ID пользователя
+    
+    Returns:
+        Результат запроса к Telegram API с информацией об участнике
+    """
+    url = f"https://api.telegram.org/bot{bot_token}/getChatMember"
+    
+    data = {
+        "chat_id": chat_id,
+        "user_id": user_id
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=data) as response:
+            return await response.json()
+
