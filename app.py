@@ -22,7 +22,7 @@ from playwright.async_api import async_playwright
 
 # Импортируем наши модули
 from security import validate_init_data, get_user_id_from_init_data
-from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments, toggle_reaction, get_reactions, update_avatar_url, update_build_photos
+from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments, toggle_reaction, get_reactions, update_avatar_url, update_build_photos, get_trophies, add_trophy, update_active_trophies
 from image_utils import process_image_for_upload, process_avatar_image, validate_image_file, temp_image_directory
 from telegram_utils import send_telegram_message, send_photos_to_telegram_group, get_chat_member
 from user_utils import get_user_with_psn, format_profile_response
@@ -289,30 +289,24 @@ async def get_users_list(user_id: int = Depends(get_current_user)):
             if category_key:
                 max_levels_map[category_key] = max_levels
         
-        # Определяем категории с максимальными уровнями для каждого пользователя
+        # Получаем активные трофеи для каждого пользователя
         for user in users:
-            max_mastery_levels = []
-            mastery = user.get('mastery', {})
+            user_id = user.get('user_id')
+            if user_id:
+                trophies_data = get_trophies(DB_PATH, user_id)
+                user['active_trophies'] = trophies_data.get('active_trophies', [])
+            else:
+                user['active_trophies'] = []
             
-            # Проверяем категории в строгом порядке: solo, hellmode, raid, speedrun
-            categories_order = ['solo', 'hellmode', 'raid', 'speedrun']
-            for category_key in categories_order:
-                if category_key in max_levels_map:
-                    max_level = max_levels_map[category_key]
-                    current_level = mastery.get(category_key, 0)
-                    if current_level >= max_level and max_level > 0:
-                        max_mastery_levels.append(category_key)
-            
-            # Удаляем поле mastery из ответа (оставляем только max_mastery_levels)
+            # Удаляем поле mastery из ответа (оно больше не нужно)
             user.pop('mastery', None)
-            user['max_mastery_levels'] = max_mastery_levels
     
     except Exception as e:
-        print(f"Ошибка обработки уровней мастерства: {e}")
+        print(f"Ошибка обработки трофеев: {e}")
         # В случае ошибки просто добавляем пустой массив для всех пользователей
         for user in users:
             user.pop('mastery', None)
-            user['max_mastery_levels'] = []
+            user['active_trophies'] = []
     
     return {"users": users}
 
@@ -1374,11 +1368,28 @@ async def approve_mastery_application(
             detail=f"Несоответствие уровней: текущий {current_level}, переданный next_level {next_level}, ожидаемый {expected_next_level}"
         )
     
+    # Загружаем конфиг для получения информации о категории
+    try:
+        config = load_mastery_config()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
+    
+    # Находим категорию в конфиге
+    category = find_category_by_key(config, category_key)
+    if not category:
+        raise HTTPException(status_code=400, detail=f"Категория {category_key} не найдена в конфиге")
+    
     # Обновляем уровень в БД (записываем current_level + 1)
     new_level = current_level + 1
     success = set_mastery(DB_PATH, user_id, category_key, new_level)
     if not success:
         raise HTTPException(status_code=500, detail="Ошибка обновления уровня в БД")
+    
+    # Проверяем, достиг ли пользователь максимального уровня, и если да - начисляем трофей
+    max_levels = category.get('maxLevels', 0)
+    if new_level >= max_levels and max_levels > 0:
+        # Пользователь достиг максимального уровня - начисляем трофей
+        add_trophy(DB_PATH, user_id, category_key)
     
     # Получаем информацию о пользователе
     user_profile = get_user(DB_PATH, user_id)
@@ -1388,22 +1399,14 @@ async def approve_mastery_application(
     psn_id = user_profile.get('psn_id', '')
     username = user_profile.get('real_name', '')
     
-    # Загружаем конфиг для получения названий
-    try:
-        config = load_mastery_config()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
-    
-    # Находим категорию и уровень в конфиге
-    category = find_category_by_key(config, category_key)
+    # Находим уровень в конфиге
     level_data = None
-    if category:
-        for level in category.get('levels', []):
-            if level.get('level') == next_level:
-                level_data = level
-                break
+    for level in category.get('levels', []):
+        if level.get('level') == next_level:
+            level_data = level
+            break
     
-    category_name = category.get('name', category_key) if category else category_key
+    category_name = category.get('name', category_key)
     level_name = level_data.get('name', f'Уровень {next_level}') if level_data else f'Уровень {next_level}'
     
     # Отправляем уведомление пользователю в личку с полной информацией
@@ -1501,6 +1504,81 @@ async def reject_mastery_application(
         "category_name": category_name,
         "level_name": level_name
     }
+
+
+# ========== API ЭНДПОИНТЫ ДЛЯ ТРОФЕЕВ ==========
+
+@app.get("/api/trophies.get")
+async def get_trophies_endpoint(user_id: int = Depends(get_current_user)):
+    """
+    Получает трофеи текущего пользователя.
+    
+    Args:
+        user_id: ID пользователя (из dependency)
+    
+    Returns:
+        JSON с данными трофеев: {
+            "trophies": List[str],  # Список всех трофеев
+            "active_trophies": List[str]  # Список активных трофеев
+        }
+    """
+    try:
+        trophies_data = get_trophies(DB_PATH, user_id)
+        return {
+            "status": "ok",
+            "trophies": trophies_data.get('trophies', []),
+            "active_trophies": trophies_data.get('active_trophies', [])
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка получения трофеев: {str(e)}"
+        )
+
+
+@app.post("/api/trophies.updateActive")
+async def update_active_trophies_endpoint(
+    user_id: int = Depends(get_current_user),
+    active_trophies: List[str] = Form(default=[])
+):
+    """
+    Обновляет список активных трофеев пользователя (максимум 8).
+    
+    Args:
+        user_id: ID пользователя (из dependency)
+        active_trophies: Список активных трофеев (максимум 8)
+    
+    Returns:
+        JSON с результатом операции
+    """
+    try:
+        # Валидация: максимум 8 трофеев
+        if len(active_trophies) > 8:
+            raise HTTPException(
+                status_code=400,
+                detail="Можно выбрать максимум 8 активных трофеев"
+            )
+        
+        # Обновляем активные трофеи
+        success = update_active_trophies(DB_PATH, user_id, active_trophies)
+        
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail="Ошибка обновления активных трофеев"
+            )
+        
+        return {
+            "status": "ok",
+            "message": "Активные трофеи успешно обновлены"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка обновления активных трофеев: {str(e)}"
+        )
 
 
 # Обработчик ошибок для CORS

@@ -265,6 +265,22 @@ def init_db(db_path: str) -> None:
             CREATE INDEX IF NOT EXISTS idx_reactions_user_id ON build_reactions(user_id)
         ''')
         
+        # Создаем таблицу trophies
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS trophies (
+                user_id INTEGER PRIMARY KEY,
+                psn_id TEXT,
+                trophies TEXT,
+                active_trophies TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(user_id)
+            )
+        ''')
+        
+        # Создаем индекс для trophies
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_trophies_user_id ON trophies(user_id)
+        ''')
+        
         conn.commit()
         conn.close()
         
@@ -348,6 +364,10 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
             # Проверяем существует ли запись в mastery
             cursor.execute('SELECT user_id FROM mastery WHERE user_id = ?', (user_id,))
             mastery_exists = cursor.fetchone() is not None
+            
+            # Проверяем существует ли запись в trophies
+            cursor.execute('SELECT user_id FROM trophies WHERE user_id = ?', (user_id,))
+            trophies_exists = cursor.fetchone() is not None
 
             # Получаем avatar_url только если оно явно передано
             avatar_url = profile_data.get('avatar_url')
@@ -394,6 +414,13 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                         INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun)
                         VALUES (?, 0, 0, 0, 0)
                     ''', (user_id,))
+                
+                # Обновляем psn_id в trophies если запись существует
+                if trophies_exists:
+                    psn_id = profile_data.get('psn_id', '') or ''
+                    cursor.execute('''
+                        UPDATE trophies SET psn_id = ? WHERE user_id = ?
+                    ''', (psn_id, user_id))
             else:
                 # INSERT нового пользователя
                 cursor.execute('''
@@ -417,6 +444,14 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                         INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun)
                         VALUES (?, 0, 0, 0, 0)
                     ''', (user_id,))
+                
+                # Автоматически создаём запись в trophies для нового пользователя (только если её нет)
+                if not trophies_exists:
+                    psn_id = profile_data.get('psn_id', '') or ''
+                    cursor.execute('''
+                        INSERT INTO trophies (user_id, psn_id, trophies, active_trophies)
+                        VALUES (?, ?, ?, ?)
+                    ''', (user_id, psn_id, '', ''))
             
             return True
         
@@ -517,10 +552,13 @@ def delete_user_all_data(db_path: str, user_id: int) -> bool:
             # 8. Удаляем mastery (уровни мастерства)
             cursor.execute('DELETE FROM mastery WHERE user_id = ?', (user_id,))
             
-            # 9. Удаляем users (профиль пользователя)
+            # 9. Удаляем trophies (трофеи пользователя)
+            cursor.execute('DELETE FROM trophies WHERE user_id = ?', (user_id,))
+            
+            # 10. Удаляем users (профиль пользователя)
             cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
             
-            # 10. Удаляем папку пользователя на сервере
+            # 11. Удаляем папку пользователя на сервере
             base_dir = os.path.dirname(db_path)
             user_dir = os.path.join(base_dir, 'users', str(user_id))
             if os.path.exists(user_dir):
@@ -1430,6 +1468,206 @@ def update_build_photos(db_path: str, build_id: int, photo_1_url: str, photo_2_u
         
     except sqlite3.Error as e:
         print(f"Ошибка обновления фото билда: {e}")
+        traceback.print_exc()
+        return False
+
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ТРОФЕЯМИ ==========
+
+def init_user_trophies(db_path: str, user_id: int, psn_id: str) -> bool:
+    """
+    Создает запись трофеев для нового пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        psn_id: PSN ID пользователя
+    
+    Returns:
+        True при успешном создании, иначе False
+    """
+    try:
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем существует ли запись
+            cursor.execute('SELECT user_id FROM trophies WHERE user_id = ?', (user_id,))
+            if cursor.fetchone() is not None:
+                return True  # Запись уже существует
+            
+            # Создаем новую запись
+            cursor.execute('''
+                INSERT INTO trophies (user_id, psn_id, trophies, active_trophies)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, psn_id or '', '', ''))
+            
+            return True
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка создания записи трофеев: {e}")
+        traceback.print_exc()
+        return False
+
+
+def get_trophies(db_path: str, user_id: int) -> Dict[str, Any]:
+    """
+    Получает все трофеи и активные трофеи пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Словарь с данными: {
+            'trophies': List[str],  # Список всех трофеев
+            'active_trophies': List[str]  # Список активных трофеев
+        }
+        Если записи нет, возвращает пустые списки
+    """
+    default_result = {
+        'trophies': [],
+        'active_trophies': []
+    }
+    
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return default_result
+            
+            cursor.execute('''
+                SELECT trophies, active_trophies
+                FROM trophies WHERE user_id = ?
+            ''', (user_id,))
+            
+            row = cursor.fetchone()
+            
+            if not row:
+                return default_result
+            
+            trophies_str = row[0] or ''
+            active_trophies_str = row[1] or ''
+            
+            return {
+                'trophies': parse_comma_separated_list(trophies_str),
+                'active_trophies': parse_comma_separated_list(active_trophies_str)
+            }
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения трофеев: {e}")
+        traceback.print_exc()
+        return default_result
+
+
+def add_trophy(db_path: str, user_id: int, trophy_key: str) -> bool:
+    """
+    Добавляет трофей в список пользователя (с проверкой на дубликаты и сортировкой по алфавиту).
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        trophy_key: Ключ трофея (например, 'solo', 'hellmode')
+    
+    Returns:
+        True при успешном добавлении, иначе False
+    """
+    try:
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return False
+            
+            # Получаем текущие трофеи
+            cursor.execute('SELECT trophies FROM trophies WHERE user_id = ?', (user_id,))
+            row = cursor.fetchone()
+            
+            if not row:
+                # Если записи нет, создаем её
+                user = get_user(db_path, user_id)
+                psn_id = user.get('psn_id', '') if user else ''
+                if not init_user_trophies(db_path, user_id, psn_id):
+                    return False
+                current_trophies = []
+            else:
+                trophies_str = row[0] or ''
+                current_trophies = parse_comma_separated_list(trophies_str)
+            
+            # Проверяем на дубликаты
+            if trophy_key in current_trophies:
+                return True  # Трофей уже есть, считаем успешным
+            
+            # Добавляем трофей и сортируем по алфавиту
+            current_trophies.append(trophy_key)
+            current_trophies.sort()  # Алфавитная сортировка
+            
+            # Обновляем запись
+            trophies_str = join_comma_separated_list(current_trophies)
+            cursor.execute('''
+                UPDATE trophies SET trophies = ? WHERE user_id = ?
+            ''', (trophies_str, user_id))
+            
+            return True
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка добавления трофея: {e}")
+        traceback.print_exc()
+        return False
+
+
+def update_active_trophies(db_path: str, user_id: int, active_trophies_list: List[str]) -> bool:
+    """
+    Обновляет список активных трофеев пользователя (максимум 8).
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        active_trophies_list: Список активных трофеев (максимум 8)
+    
+    Returns:
+        True при успешном обновлении, иначе False
+    """
+    try:
+        # Ограничиваем до 8 трофеев
+        if len(active_trophies_list) > 8:
+            active_trophies_list = active_trophies_list[:8]
+        
+        # Проверяем, что все активные трофеи есть в списке всех трофеев пользователя
+        user_trophies = get_trophies(db_path, user_id)
+        all_trophies = set(user_trophies.get('trophies', []))
+        active_set = set(active_trophies_list)
+        
+        # Удаляем трофеи, которых нет в списке всех трофеев
+        valid_active = [t for t in active_trophies_list if t in all_trophies]
+        
+        # Сортируем по алфавиту (сохраняя порядок в пределах алфавитной сортировки)
+        valid_active.sort()
+        
+        # Ограничиваем до 8 после фильтрации
+        if len(valid_active) > 8:
+            valid_active = valid_active[:8]
+        
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем существует ли запись
+            cursor.execute('SELECT user_id FROM trophies WHERE user_id = ?', (user_id,))
+            if cursor.fetchone() is None:
+                # Если записи нет, создаем её
+                user = get_user(db_path, user_id)
+                psn_id = user.get('psn_id', '') if user else ''
+                if not init_user_trophies(db_path, user_id, psn_id):
+                    return False
+            
+            # Обновляем активные трофеи
+            active_trophies_str = join_comma_separated_list(valid_active)
+            cursor.execute('''
+                UPDATE trophies SET active_trophies = ? WHERE user_id = ?
+            ''', (active_trophies_str, user_id))
+            
+            return True
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка обновления активных трофеев: {e}")
         traceback.print_exc()
         return False
         
