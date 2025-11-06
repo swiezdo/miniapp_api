@@ -5,6 +5,7 @@ import sqlite3
 import json
 import time
 import os
+import shutil
 import traceback
 from contextlib import contextmanager
 from typing import Dict, Optional, Any, List
@@ -446,6 +447,82 @@ def delete_user(db_path: str, user_id: int) -> bool:
         
     except sqlite3.Error as e:
         print(f"Ошибка удаления пользователя: {e}")
+        traceback.print_exc()
+        return False
+
+
+def delete_user_all_data(db_path: str, user_id: int) -> bool:
+    """
+    Удаляет все данные пользователя из всех таблиц базы данных и файлы на сервере.
+    
+    Порядок удаления:
+    1. Получает список build_id всех билдов пользователя
+    2. Удаляет build_reactions (реакции пользователя)
+    3. Удаляет comments (комментарии пользователя)
+    4. Удаляет builds (билды пользователя)
+    5. Удаляет папки билдов на сервере
+    6. Удаляет mastery (уровни мастерства)
+    7. Удаляет users (профиль пользователя)
+    8. Удаляет папку пользователя на сервере
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя Telegram
+    
+    Returns:
+        True при успешном удалении, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # 1. Получаем список build_id всех билдов пользователя
+            cursor.execute('SELECT build_id FROM builds WHERE user_id = ?', (user_id,))
+            build_ids = [row[0] for row in cursor.fetchall()]
+            
+            # 2. Удаляем build_reactions (реакции пользователя)
+            cursor.execute('DELETE FROM build_reactions WHERE user_id = ?', (user_id,))
+            
+            # 3. Удаляем comments (комментарии пользователя)
+            cursor.execute('DELETE FROM comments WHERE user_id = ?', (user_id,))
+            
+            # 4. Удаляем builds (билды пользователя)
+            cursor.execute('DELETE FROM builds WHERE user_id = ?', (user_id,))
+            
+            # 5. Удаляем папки билдов на сервере
+            base_dir = os.path.dirname(db_path)
+            for build_id in build_ids:
+                build_dir = os.path.join(base_dir, 'builds', str(build_id))
+                if os.path.exists(build_dir):
+                    try:
+                        shutil.rmtree(build_dir)
+                    except OSError as e:
+                        print(f"Ошибка удаления папки билда {build_id}: {e}")
+            
+            # 6. Удаляем mastery (уровни мастерства)
+            cursor.execute('DELETE FROM mastery WHERE user_id = ?', (user_id,))
+            
+            # 7. Удаляем users (профиль пользователя)
+            cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
+            
+            # 8. Удаляем папку пользователя на сервере
+            base_dir = os.path.dirname(db_path)
+            user_dir = os.path.join(base_dir, 'users', str(user_id))
+            if os.path.exists(user_dir):
+                try:
+                    shutil.rmtree(user_dir)
+                except OSError as e:
+                    print(f"Ошибка удаления папки пользователя {user_id}: {e}")
+            
+            return True
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка удаления всех данных пользователя: {e}")
+        traceback.print_exc()
+        return False
+    except Exception as e:
+        print(f"Ошибка при удалении файлов пользователя {user_id}: {e}")
         traceback.print_exc()
         return False
 
