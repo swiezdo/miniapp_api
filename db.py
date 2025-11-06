@@ -457,13 +457,15 @@ def delete_user_all_data(db_path: str, user_id: int) -> bool:
     
     Порядок удаления:
     1. Получает список build_id всех билдов пользователя
-    2. Удаляет build_reactions (реакции пользователя)
-    3. Удаляет comments (комментарии пользователя)
-    4. Удаляет builds (билды пользователя)
-    5. Удаляет папки билдов на сервере
-    6. Удаляет mastery (уровни мастерства)
-    7. Удаляет users (профиль пользователя)
-    8. Удаляет папку пользователя на сервере
+    2. Удаляет все comments под билдами пользователя (комментарии всех участников)
+    3. Удаляет все build_reactions под билдами пользователя (реакции всех участников)
+    4. Удаляет build_reactions пользователя (реакции самого пользователя)
+    5. Удаляет comments пользователя (комментарии самого пользователя)
+    6. Удаляет builds (билды пользователя)
+    7. Удаляет папки билдов на сервере
+    8. Удаляет mastery (уровни мастерства)
+    9. Удаляет users (профиль пользователя)
+    10. Удаляет папку пользователя на сервере
     
     Args:
         db_path: Путь к файлу базы данных
@@ -481,16 +483,28 @@ def delete_user_all_data(db_path: str, user_id: int) -> bool:
             cursor.execute('SELECT build_id FROM builds WHERE user_id = ?', (user_id,))
             build_ids = [row[0] for row in cursor.fetchall()]
             
-            # 2. Удаляем build_reactions (реакции пользователя)
+            # 2. Удаляем все comments под билдами пользователя (комментарии всех участников)
+            if build_ids:
+                # Используем IN для удаления всех комментариев под билдами пользователя
+                placeholders = ','.join('?' * len(build_ids))
+                cursor.execute(f'DELETE FROM comments WHERE build_id IN ({placeholders})', build_ids)
+            
+            # 3. Удаляем все build_reactions под билдами пользователя (реакции всех участников)
+            if build_ids:
+                # Используем IN для удаления всех реакций под билдами пользователя
+                placeholders = ','.join('?' * len(build_ids))
+                cursor.execute(f'DELETE FROM build_reactions WHERE build_id IN ({placeholders})', build_ids)
+            
+            # 4. Удаляем build_reactions пользователя (реакции самого пользователя)
             cursor.execute('DELETE FROM build_reactions WHERE user_id = ?', (user_id,))
             
-            # 3. Удаляем comments (комментарии пользователя)
+            # 5. Удаляем comments пользователя (комментарии самого пользователя)
             cursor.execute('DELETE FROM comments WHERE user_id = ?', (user_id,))
             
-            # 4. Удаляем builds (билды пользователя)
+            # 6. Удаляем builds (билды пользователя)
             cursor.execute('DELETE FROM builds WHERE user_id = ?', (user_id,))
             
-            # 5. Удаляем папки билдов на сервере
+            # 7. Удаляем папки билдов на сервере
             base_dir = os.path.dirname(db_path)
             for build_id in build_ids:
                 build_dir = os.path.join(base_dir, 'builds', str(build_id))
@@ -500,13 +514,13 @@ def delete_user_all_data(db_path: str, user_id: int) -> bool:
                     except OSError as e:
                         print(f"Ошибка удаления папки билда {build_id}: {e}")
             
-            # 6. Удаляем mastery (уровни мастерства)
+            # 8. Удаляем mastery (уровни мастерства)
             cursor.execute('DELETE FROM mastery WHERE user_id = ?', (user_id,))
             
-            # 7. Удаляем users (профиль пользователя)
+            # 9. Удаляем users (профиль пользователя)
             cursor.execute('DELETE FROM users WHERE user_id = ?', (user_id,))
             
-            # 8. Удаляем папку пользователя на сервере
+            # 10. Удаляем папку пользователя на сервере
             base_dir = os.path.dirname(db_path)
             user_dir = os.path.join(base_dir, 'users', str(user_id))
             if os.path.exists(user_dir):
