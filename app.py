@@ -28,6 +28,7 @@ from telegram_utils import send_telegram_message, send_photos_to_telegram_group,
 from user_utils import get_user_with_psn, format_profile_response
 from mastery_utils import find_category_by_key, parse_tags
 from mastery_config import load_mastery_config
+from trophy_config import load_trophy_config, find_trophy_by_key
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -1441,6 +1442,136 @@ async def approve_mastery_application(
     }
 
 
+@app.post("/api/trophy.approve")
+async def approve_trophy_application(
+    user_id: int = Form(...),
+    trophy_key: str = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Одобряет заявку на получение трофея.
+    Вызывается ботом при нажатии кнопки "Одобрить".
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Загружаем конфиг трофеев
+    try:
+        config = load_trophy_config()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
+    
+    # Находим трофей в конфиге
+    trophy = find_trophy_by_key(config, trophy_key)
+    if not trophy:
+        raise HTTPException(status_code=400, detail=f"Трофей {trophy_key} не найден в конфиге")
+    
+    trophy_name = trophy.get('name', trophy_key)
+    
+    # Проверяем, не получен ли уже трофей
+    user_trophies_data = get_trophies(DB_PATH, user_id)
+    user_trophies = set(user_trophies_data.get('trophies', []))
+    if trophy_key in user_trophies:
+        raise HTTPException(
+            status_code=400,
+            detail="Этот трофей уже получен пользователем"
+        )
+    
+    # Добавляем трофей
+    success = add_trophy(DB_PATH, user_id, trophy_key)
+    if not success:
+        raise HTTPException(status_code=500, detail="Ошибка добавления трофея в БД")
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    psn_id = user_profile.get('psn_id', '')
+    username = user_profile.get('real_name', '')
+    
+    # Отправляем уведомление пользователю в личку
+    try:
+        user_notification = f"""✅ <b>Ваша заявка на получение трофея была одобрена!</b>
+
+🏅 <b>Трофей:</b> {trophy_name}
+
+Теперь этот трофей доступен в вашей коллекции на странице "Награды"."""
+        
+        await send_telegram_message(
+            bot_token=BOT_TOKEN,
+            chat_id=str(user_id),
+            text=user_notification
+        )
+    except Exception as e:
+        print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+    
+    return {
+        "status": "ok",
+        "success": True,
+        "trophy_name": trophy_name,
+        "psn_id": psn_id,
+        "username": username,
+        "user_id": user_id
+    }
+
+
+@app.post("/api/trophy.reject")
+async def reject_trophy_application(
+    user_id: int = Form(...),
+    trophy_key: str = Form(...),
+    reason: str = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Отклоняет заявку на получение трофея.
+    Вызывается ботом после получения причины отклонения от модератора.
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    # Загружаем конфиг для получения названия
+    try:
+        config = load_trophy_config()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
+    
+    # Находим трофей в конфиге
+    trophy = find_trophy_by_key(config, trophy_key)
+    trophy_name = trophy.get('name', trophy_key) if trophy else trophy_key
+    
+    # Отправляем уведомление пользователю в личку
+    try:
+        user_notification = f"""❌ <b>К сожалению, ваша заявка на получение трофея была отклонена.</b>
+
+🏅 <b>Трофей:</b> {trophy_name}
+
+Причина: {reason}"""
+        
+        await send_telegram_message(
+            bot_token=BOT_TOKEN,
+            chat_id=str(user_id),
+            text=user_notification
+        )
+    except Exception as e:
+        print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+    
+    return {
+        "status": "ok",
+        "success": True,
+        "trophy_name": trophy_name
+    }
+
+
 @app.post("/api/mastery.reject")
 async def reject_mastery_application(
     user_id: int = Form(...),
@@ -1509,7 +1640,10 @@ async def reject_mastery_application(
 # ========== API ЭНДПОИНТЫ ДЛЯ ТРОФЕЕВ ==========
 
 @app.get("/api/trophies.get")
-async def get_trophies_endpoint(user_id: int = Depends(get_current_user)):
+async def get_trophies_endpoint(
+    target_user_id: Optional[int] = Query(default=None, description="ID пользователя, для которого нужно получить трофеи"),
+    user_id: int = Depends(get_current_user)
+):
     """
     Получает трофеи текущего пользователя.
     
@@ -1523,7 +1657,8 @@ async def get_trophies_endpoint(user_id: int = Depends(get_current_user)):
         }
     """
     try:
-        trophies_data = get_trophies(DB_PATH, user_id)
+        target_id = target_user_id or user_id
+        trophies_data = get_trophies(DB_PATH, target_id)
         return {
             "status": "ok",
             "trophies": trophies_data.get('trophies', []),
@@ -1534,6 +1669,181 @@ async def get_trophies_endpoint(user_id: int = Depends(get_current_user)):
             status_code=500,
             detail=f"Ошибка получения трофеев: {str(e)}"
         )
+
+
+@app.get("/api/trophies.list")
+async def get_trophies_list(user_id: int = Depends(get_current_user)):
+    """
+    Получает список всех доступных трофеев из конфига.
+    
+    Args:
+        user_id: ID пользователя (из dependency, для проверки авторизации)
+    
+    Returns:
+        JSON со списком всех трофеев из конфига
+    """
+    try:
+        config = load_trophy_config()
+        trophies_list = config.get('trophies', [])
+        
+        # Получаем трофеи пользователя для отметки полученных
+        user_trophies_data = get_trophies(DB_PATH, user_id)
+        user_trophies = set(user_trophies_data.get('trophies', []))
+        
+        # Отмечаем какие трофеи получены
+        for trophy in trophies_list:
+            trophy_key = trophy.get('key')
+            trophy['obtained'] = trophy_key in user_trophies if trophy_key else False
+        
+        return {
+            "status": "ok",
+            "trophies": trophies_list
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка получения списка трофеев: {str(e)}"
+        )
+
+
+@app.post("/api/trophy.submit")
+async def submit_trophy_application(
+    user_id: int = Depends(get_current_user),
+    trophy_key: str = Form(...),
+    comment: Optional[str] = Form(default=None),
+    photos: Optional[List[UploadFile]] = File(default=None)
+):
+    """
+    Отправляет заявку на получение трофея в админскую группу.
+    """
+    # Получаем профиль пользователя для получения psn_id
+    user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
+    
+    # Загружаем конфиг трофеев
+    try:
+        config = load_trophy_config()
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка загрузки конфига трофеев: {str(e)}"
+        )
+    
+    # Находим трофей в конфиге
+    trophy = find_trophy_by_key(config, trophy_key)
+    
+    if not trophy:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Трофей {trophy_key} не найден в конфиге"
+        )
+    
+    # Проверяем, не получен ли уже трофей
+    user_trophies_data = get_trophies(DB_PATH, user_id)
+    user_trophies = set(user_trophies_data.get('trophies', []))
+    if trophy_key in user_trophies:
+        raise HTTPException(
+            status_code=400,
+            detail="Этот трофей уже получен"
+        )
+    
+    # Валидация
+    if photos is None or len(photos) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Необходимо прикрепить хотя бы одно изображение"
+        )
+    
+    if len(photos) > 9:
+        raise HTTPException(
+            status_code=400,
+            detail="Можно прикрепить не более 9 изображений"
+        )
+    
+    # Проверяем что все файлы - изображения
+    for photo in photos:
+        if not validate_image_file(photo):
+            raise HTTPException(
+                status_code=400,
+                detail="Разрешены только изображения"
+            )
+    
+    # Формируем сообщение для группы
+    trophy_name = trophy.get('name', trophy_key)
+    trophy_description = trophy.get('description', '')
+    trophy_proof = trophy.get('proof', '')
+    
+    comment_text = comment.strip() if comment and comment.strip() else "Без комментария"
+    
+    message_text = f"""🏆 <b>Заявка на получение трофея</b>
+
+👤 <b>PSN ID:</b> {psn_id}
+🏅 <b>Трофей:</b> {trophy_name}
+📝 <b>Описание:</b>
+{trophy_description}
+
+📸 <b>Требуемые доказательства:</b>
+{trophy_proof}
+
+💬 <b>Комментарий:</b> {comment_text}"""
+    
+    # Создаем inline кнопки
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "Одобрить",
+                    "callback_data": f"approve_trophy:{user_id}:{trophy_key}"
+                },
+                {
+                    "text": "Отклонить",
+                    "callback_data": f"reject_trophy:{user_id}:{trophy_key}"
+                }
+            ]
+        ]
+    }
+    
+    # Обрабатываем и отправляем фотографии
+    try:
+        with temp_image_directory(prefix='trophy_app_') as temp_dir:
+            photo_paths = []
+            
+            # Обрабатываем и сохраняем изображения
+            for i, photo in enumerate(photos):
+                photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
+                
+                # Открываем изображение через Pillow
+                image = Image.open(photo.file)
+                
+                # Обрабатываем изображение
+                process_image_for_upload(image, photo_path)
+                photo_paths.append(photo_path)
+                
+                # Возвращаем курсор файла
+                photo.file.seek(0)
+            
+            # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
+            try:
+                await send_photos_to_telegram_group(
+                    bot_token=BOT_TOKEN,
+                    chat_id=TROPHY_GROUP_CHAT_ID,
+                    photo_paths=photo_paths,
+                    message_text=message_text,
+                    reply_markup=reply_markup,
+                    message_thread_id=TROPHY_GROUP_TOPIC_ID
+                )
+            except Exception as e:
+                print(f"Ошибка отправки заявки в группу: {e}")
+                # Не прерываем выполнение, но логируем ошибку
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка обработки изображений: {str(e)}"
+        )
+    
+    return {
+        "status": "ok",
+        "message": "Заявка успешно отправлена"
+    }
 
 
 @app.post("/api/trophies.updateActive")
@@ -1606,6 +1916,7 @@ async def get_profile_preview(user_id: int):
     
     # Получаем данные мастерства
     mastery_levels = get_mastery(DB_PATH, user_id)
+    trophies_data = get_trophies(DB_PATH, user_id)
     
     # Загружаем конфиг мастерства
     try:
@@ -1613,6 +1924,12 @@ async def get_profile_preview(user_id: int):
     except Exception as e:
         print(f"Ошибка загрузки конфига мастерства: {e}")
         mastery_config = None
+
+    try:
+        trophy_config = load_trophy_config()
+    except Exception as e:
+        print(f"Ошибка загрузки конфига трофеев: {e}")
+        trophy_config = None
     
     # Формируем данные профиля для встраивания в HTML
     profile_data = {
@@ -1625,7 +1942,8 @@ async def get_profile_preview(user_id: int):
         "difficulties": profile.get('difficulties', []) if profile else [],
         "avatar_url": profile.get('avatar_url', '') if profile else '',
         "mastery": mastery_levels,
-        "mastery_config": mastery_config
+        "mastery_config": mastery_config,
+        "trophies": trophies_data
     }
     
     # Встраиваем данные профиля напрямую в HTML (без JavaScript)
@@ -1750,6 +2068,25 @@ async def get_profile_preview(user_id: int):
     html_content = html_content.replace(
         '<div id="v_mastery" class="value lines">—</div>',
         f'<div id="v_mastery" class="value lines">{mastery_text}</div>'
+    )
+
+    trophies_list = trophies_data.get('trophies', []) if trophies_data else []
+    mastery_trophy_keys = {'solo', 'hellmode', 'raid', 'speedrun'}
+    filtered_trophies = sorted([key for key in trophies_list if key not in mastery_trophy_keys])
+
+    trophy_names = []
+    if filtered_trophies:
+        if trophy_config:
+            for key in filtered_trophies:
+                trophy = find_trophy_by_key(trophy_config, key)
+                trophy_names.append(trophy.get('name', key) if trophy else key)
+        else:
+            trophy_names = filtered_trophies[:]
+
+    trophies_text = "\n".join(trophy_names) if trophy_names else "—"
+    html_content = html_content.replace(
+        '<div id="v_trophies" class="value lines">—</div>',
+        f'<div id="v_trophies" class="value lines">{trophies_text}</div>'
     )
     
     # Добавляем скрипт для сигнала готовности (данные уже заполнены)
