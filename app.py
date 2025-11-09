@@ -52,6 +52,9 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "swiezdo_testbot")
 # ID основной группы (используется для проверки участников)
 GROUP_ID = os.getenv("GROUP_ID", "-1002365374672")
 
+# Путь к данным волн
+WAVES_FILE_PATH = "/root/gyozenbot/json/waves.json"
+
 # Удалены кеш и загрузка данных трофеев
 # Функции для работы с Telegram Bot API перенесены в telegram_utils.py
 
@@ -397,6 +400,26 @@ async def get_stats():
         "api_version": "1.0.0"
     }
 
+
+@app.get("/api/waves.get")
+async def get_waves_data(user_id: int = Depends(get_current_user)):
+    """
+    Возвращает данные волн из waves.json.
+    """
+    try:
+        with open(WAVES_FILE_PATH, "r", encoding="utf-8") as f:
+            waves_data = json.load(f)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Файл waves.json не найден")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"Некорректный формат waves.json: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Ошибка чтения waves.json: {exc}")
+
+    if not isinstance(waves_data, dict):
+        raise HTTPException(status_code=500, detail="Неверный формат данных waves.json")
+
+    return waves_data
 
 # ========== API ЭНДПОИНТЫ ДЛЯ АВАТАРОК ==========
 
