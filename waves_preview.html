@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Волны</title>
+    <link rel="stylesheet" href="/assets/css/style.css">
+    <style>
+        body {
+            background: #000;
+            color: #fff;
+            font: 16px / 1.45 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+            margin: 0;
+            padding: 8px 4px;
+            -webkit-font-smoothing: antialiased;
+        }
+        main.container {
+            max-width: 430px;
+            margin: 0 auto;
+            padding: 0;
+        }
+        .topbar {
+            margin-bottom: 8px;
+            position: static;
+        }
+        .card {
+            margin: 4px 2px;
+        }
+        .card.waves-table {
+            padding: 0;
+            margin: 4px 2px !important;
+            width: 100% !important;
+            box-sizing: border-box;
+        }
+        .card.waves-meta-card {
+            margin: 4px 2px !important;
+        }
+        #wavesEmptyState.hidden {
+            display: none;
+        }
+        .hidden {
+            display: none !important;
+        }
+        #waves-ready {
+            position: fixed;
+            top: -9999px;
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <header class="topbar">
+            <div class="title" id="appTitle">__TOPBAR_TITLE__</div>
+        </header>
+
+        <section class="card waves-meta-card __MAP_CARD_EXTRA_CLASS__" id="wavesMetaCardContainer" style="--waves-map-bg: none;">
+            <div class="__MOD_ICONS_CLASS__" id="wavesModIcons">
+                __MOD_ICONS__
+            </div>
+            <div class="waves-header">
+                <div id="wavesMap" class="waves-title">__MAP_NAME__</div>
+                <div id="wavesMod1" class="waves-subtitle muted">__MOD1__</div>
+                <div id="wavesMod2" class="waves-subtitle muted">__MOD2__</div>
+            </div>
+        </section>
+
+        <table id="wavesTable" class="card waves-table">
+            <tbody id="wavesTableBody">
+                __WAVES_ROWS__
+            </tbody>
+        </table>
+
+        <div id="wavesEmptyState" class="waves-empty hint muted __EMPTY_CLASS__">
+            Данные о волнах недоступны.
+        </div>
+    </main>
+
+    <div id="waves-ready"></div>
+
+    <script>
+        // READY_SCRIPT_PLACEHOLDER
+    </script>
+ </body>
+ </html>

@@ -9,6 +9,7 @@ import requests
 import tempfile
 import sqlite3
 import io
+import html
 import traceback
 import re
 from fastapi import FastAPI, HTTPException, Depends, Header, Form, File, UploadFile, Request, Query
@@ -54,6 +55,10 @@ GROUP_ID = os.getenv("GROUP_ID", "-1002365374672")
 
 # Путь к данным волн
 WAVES_FILE_PATH = "/root/gyozenbot/json/waves.json"
+WAVES_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'waves_preview.html')
+OBJECTIVE_WAVE_NUMBERS = [2, 4, 7, 10, 13]
+MOD_WAVE_NUMBERS = [3, 6, 9, 12, 15]
+ASSETS_PREFIX = "/assets/assets"
 
 # Удалены кеш и загрузка данных трофеев
 # Функции для работы с Telegram Bot API перенесены в telegram_utils.py
@@ -401,10 +406,9 @@ async def get_stats():
     }
 
 
-@app.get("/api/waves.get")
-async def get_waves_data(user_id: int = Depends(get_current_user)):
+def _read_waves_json() -> dict:
     """
-    Возвращает данные волн из waves.json.
+    Загружает данные волн из файла waves.json.
     """
     try:
         with open(WAVES_FILE_PATH, "r", encoding="utf-8") as f:
@@ -420,6 +424,269 @@ async def get_waves_data(user_id: int = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Неверный формат данных waves.json")
 
     return waves_data
+
+
+@app.get("/api/waves.get")
+async def get_waves_data(user_id: int = Depends(get_current_user)):
+    """
+    Возвращает данные волн из waves.json.
+    """
+    return _read_waves_json()
+
+
+def _safe_text(value, default: str = "—") -> str:
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
+def _format_week_title(week_value, absolute_value) -> str:
+    week = str(week_value).strip() if week_value is not None else ""
+    absolute = str(absolute_value).strip() if absolute_value is not None else ""
+    if week and absolute:
+        return f"{absolute}-ая неделя ({week})"
+    if absolute:
+        return f"{absolute}-ая неделя"
+    if week:
+        return f"Неделя {week}"
+    return "Волны"
+
+
+def _get_objective_icon(objectives: Optional[dict], wave_number: int) -> Optional[dict]:
+    if not isinstance(objectives, dict):
+        return None
+    try:
+        index = OBJECTIVE_WAVE_NUMBERS.index(wave_number)
+    except ValueError:
+        return None
+
+    base_key = f"objective{index + 1}"
+    filename = objectives.get(f"{base_key}_icon")
+    if not filename:
+        return None
+
+    description = _safe_text(objectives.get(base_key), "Бонусная задача")
+    count = objectives.get(f"{base_key}_num")
+    label = str(count).strip() if count is not None and str(count).strip() else None
+    tooltip = description if not label else f"{description} — {label}"
+
+    return {
+        "path": f"{ASSETS_PREFIX}/icons/objectives/{filename}",
+        "badge_class": "waves-icon-badge--objective",
+        "description": tooltip,
+        "label": label,
+    }
+
+
+def _get_mod_icon(mods: Optional[dict], wave_number: int) -> Optional[dict]:
+    if not isinstance(mods, dict):
+        return None
+    try:
+        index = MOD_WAVE_NUMBERS.index(wave_number)
+    except ValueError:
+        return None
+
+    base_key = f"mod{index + 1}"
+    filename = mods.get(f"{base_key}_icon")
+    if not filename:
+        return None
+
+    description = _safe_text(mods.get(base_key), "Модификатор мира")
+
+    return {
+        "path": f"{ASSETS_PREFIX}/icons/mods/{filename}",
+        "badge_class": "waves-icon-badge--mod",
+        "description": description,
+        "label": None,
+    }
+
+
+def _get_wave_icon_data(waves_data: dict, wave_number: int) -> Optional[dict]:
+    icon = _get_objective_icon(waves_data.get("objectives"), wave_number)
+    if icon:
+        return icon
+    return _get_mod_icon(waves_data.get("mods"), wave_number)
+
+
+def _build_wave_icon_cell(waves_data: dict, wave_number: int) -> str:
+    icon_data = _get_wave_icon_data(waves_data, wave_number)
+    if not icon_data:
+        return '<td class="waves-icon"></td>'
+
+    label_html = ""
+    if icon_data.get("label"):
+        label_html = f'<span class="waves-icon-tag">{html.escape(icon_data["label"])}</span>'
+
+    description = html.escape(icon_data.get("description", ""))
+    path = html.escape(icon_data.get("path", ""))
+    badge_class = icon_data.get("badge_class", "")
+
+    return (
+        '<td class="waves-icon">'
+        f'<div class="waves-icon-badge {badge_class}">'
+        f'{label_html}'
+        f'<img class="waves-icon-img" src="{path}" alt="{description}" title="{description}" data-await="true" />'
+        "</div>"
+        "</td>"
+    )
+
+
+def _build_waves_table_rows(waves_data: dict) -> str:
+    rows: List[str] = []
+    waves = waves_data.get("waves")
+
+    for index in range(15):
+        wave_number = index + 1
+        row_class = ' class="waves-strong"' if wave_number % 3 == 0 else ""
+
+        wave_row = []
+        if isinstance(waves, list) and index < len(waves) and isinstance(waves[index], list):
+            for value in waves[index]:
+                if isinstance(value, str):
+                    cleaned = value.strip()
+                    if cleaned:
+                        wave_row.append(cleaned)
+
+        spawns_text = ", ".join(wave_row) if wave_row else "—"
+        spawns_html = html.escape(spawns_text)
+        icon_cell = _build_wave_icon_cell(waves_data, wave_number)
+
+        rows.append(
+            f'<tr{row_class}>\n'
+            f'    {icon_cell}\n'
+            f'    <td class="waves-number">{wave_number}.</td>\n'
+            f'    <td class="waves-spawns">{spawns_html}</td>\n'
+            f'</tr>'
+        )
+
+    return "\n".join(rows)
+
+
+def _build_header_mod_icons(waves_data: dict) -> tuple[str, bool]:
+    icons: List[str] = []
+
+    mod1_icon = waves_data.get("mod1_icon")
+    if mod1_icon:
+        title = _safe_text(waves_data.get("mod1"), "")
+        icons.append(
+            '<div class="waves-mod-icon">'
+            f'<img src="{ASSETS_PREFIX}/icons/mod1/{html.escape(mod1_icon)}" alt="{html.escape(title)}" '
+            f'title="{html.escape(title)}" data-await="true" />'
+            "</div>"
+        )
+
+    mod2_icon = waves_data.get("mod2_icon")
+    if mod2_icon:
+        title = _safe_text(waves_data.get("mod2"), "")
+        icons.append(
+            '<div class="waves-mod-icon">'
+            f'<img src="{ASSETS_PREFIX}/icons/mod2/{html.escape(mod2_icon)}" alt="{html.escape(title)}" '
+            f'title="{html.escape(title)}" data-await="true" />'
+            "</div>"
+        )
+
+    return ("\n".join(icons), bool(icons))
+
+
+def render_waves_template(waves_data: dict) -> str:
+    if not os.path.exists(WAVES_TEMPLATE_PATH):
+        raise HTTPException(status_code=500, detail="HTML template not found")
+
+    with open(WAVES_TEMPLATE_PATH, "r", encoding="utf-8") as template_file:
+        html_content = template_file.read()
+
+    topbar_title = _format_week_title(waves_data.get("week"), waves_data.get("absolute_week"))
+    map_name = _safe_text(waves_data.get("map"))
+    mod1_text = _safe_text(waves_data.get("mod1"))
+    mod2_text = _safe_text(waves_data.get("mod2"))
+
+    slug = _safe_text(waves_data.get("slug"), "")
+    if slug:
+        map_url = f"{ASSETS_PREFIX}/maps/{slug}.jpg"
+        map_card_extra_class = "waves-meta-card--with-bg"
+        map_bg_style = f"--waves-map-bg: url('{html.escape(map_url, quote=True)}');"
+    else:
+        map_card_extra_class = ""
+        map_bg_style = "--waves-map-bg: none;"
+
+    mod_icons_html, has_mod_icons = _build_header_mod_icons(waves_data)
+    mod_icons_class = "waves-mod-icons" if has_mod_icons else "waves-mod-icons hidden"
+    mod_icons_html = mod_icons_html or ""
+
+    waves_rows = _build_waves_table_rows(waves_data)
+    has_waves = bool(waves_rows.strip())
+    empty_class = "hidden" if has_waves else ""
+
+    replacements = {
+        "__TOPBAR_TITLE__": html.escape(topbar_title),
+        "__MAP_CARD_EXTRA_CLASS__": map_card_extra_class,
+        "__MOD_ICONS_CLASS__": mod_icons_class,
+        "__MOD_ICONS__": mod_icons_html,
+        "__MAP_NAME__": html.escape(map_name),
+        "__MOD1__": html.escape(mod1_text),
+        "__MOD2__": html.escape(mod2_text),
+        "__WAVES_ROWS__": waves_rows,
+        "__EMPTY_CLASS__": empty_class,
+    }
+
+    for placeholder, value in replacements.items():
+        html_content = html_content.replace(placeholder, value)
+
+    html_content = html_content.replace(
+        'style="--waves-map-bg: none;"',
+        f'style="{map_bg_style}"',
+        1,
+    )
+
+    script_content = """
+        (function() {
+            const readyEl = document.getElementById('waves-ready');
+            if (!readyEl) {
+                return;
+            }
+            const images = Array.from(document.querySelectorAll('img[data-await="true"]'));
+            if (!images.length) {
+                readyEl.setAttribute('data-ready', 'true');
+                return;
+            }
+            let remaining = images.length;
+            const markReady = () => {
+                readyEl.setAttribute('data-ready', 'true');
+            };
+            const finalize = () => {
+                remaining -= 1;
+                if (remaining <= 0) {
+                    markReady();
+                }
+            };
+            images.forEach((img) => {
+                if (img.complete) {
+                    finalize();
+                } else {
+                    img.addEventListener('load', finalize, { once: true });
+                    img.addEventListener('error', finalize, { once: true });
+                }
+            });
+        })();
+    """.strip()
+
+    html_content = html_content.replace(
+        "// READY_SCRIPT_PLACEHOLDER",
+        script_content,
+        1,
+    )
+
+    return html_content
+
+
+@app.get("/waves-preview", response_class=HTMLResponse)
+async def get_waves_preview():
+    """
+    Возвращает HTML-страницу текущей ротации волн для скриншота.
+    """
+    waves_data = _read_waves_json()
+    return render_waves_template(waves_data)
 
 # ========== API ЭНДПОИНТЫ ДЛЯ АВАТАРОК ==========
 
@@ -2203,7 +2470,7 @@ async def screenshot_profile(user_id: int, base_url: str = "http://localhost:800
         try:
             # Создаем контекст с мобильным viewport
             context = await browser.new_context(
-                viewport={"width": 375, "height": 812},
+                viewport={"width": 375, "height": 1600},
                 device_scale_factor=2,
                 user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15"
             )
@@ -2305,6 +2572,77 @@ async def screenshot_profile(user_id: int, base_url: str = "http://localhost:800
                 await page.close()
                 await context.close()
                 
+        finally:
+            await browser.close()
+
+
+async def screenshot_waves(base_url: str = "http://localhost:8000") -> bytes:
+    """
+    Создает скриншот страницы волн через Playwright.
+    """
+    base = base_url.rstrip("/") or "http://localhost:8000"
+    url = f"{base}/waves-preview"
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+
+        try:
+            context = await browser.new_context(
+                viewport={"width": 375, "height": 812},
+                device_scale_factor=2,
+                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15"
+            )
+
+            page = await context.new_page()
+
+            try:
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+
+                try:
+                    await page.wait_for_function(
+                        """
+                        () => {
+                            const readyEl = document.getElementById('waves-ready');
+                            return readyEl && readyEl.getAttribute('data-ready') === 'true';
+                        }
+                        """,
+                        timeout=10000
+                    )
+                    await page.wait_for_timeout(300)
+                except Exception as wait_exc:
+                    print(f"Warning: Timeout waiting for waves ready marker: {wait_exc}")
+                    await page.wait_for_timeout(1500)
+
+                content_height = await page.evaluate(
+                    """
+                    () => {
+                        const main = document.querySelector('main.container');
+                        if (!main) {
+                            return Math.ceil(
+                                document.documentElement.scrollHeight
+                                || document.body.scrollHeight
+                                || 1200
+                            );
+                        }
+                        const rect = main.getBoundingClientRect();
+                        return Math.ceil(rect.bottom + 24);
+                    }
+                    """
+                )
+
+                if not isinstance(content_height, (int, float)):
+                    content_height = 1200
+                content_height = int(max(640, min(content_height, 2000)))
+
+                await page.set_viewport_size({"width": 375, "height": content_height})
+
+                screenshot_bytes = await page.screenshot(type="png")
+                return screenshot_bytes
+
+            finally:
+                await page.close()
+                await context.close()
+
         finally:
             await browser.close()
 
@@ -2414,6 +2752,55 @@ async def send_profile_screenshot(
         raise HTTPException(
             status_code=500,
             detail=f"Ошибка при создании скриншота: {str(e)}"
+        )
+
+
+@app.post("/api/send_waves")
+async def send_waves_screenshot(
+    chat_id: str = Query(..., description="ID чата для отправки фото"),
+    message_thread_id: Optional[int] = Query(None, description="ID темы (если есть)"),
+    base_url: Optional[str] = Query(None, description="Базовый URL сервера (по умолчанию localhost:8000)")
+):
+    """
+    Создает скриншот текущей ротации волн и отправляет его в Telegram.
+    """
+    try:
+        waves_data = _read_waves_json()
+
+        effective_base = base_url or "http://localhost:8000"
+        screenshot_bytes = await screenshot_waves(effective_base)
+
+        caption_parts: List[str] = []
+        map_name = waves_data.get("map")
+        if map_name:
+            caption_parts.append(f"🗺 <b>{html.escape(str(map_name))}</b>")
+
+        week_caption = _format_week_title(waves_data.get("week"), waves_data.get("absolute_week"))
+        if week_caption and week_caption != "Волны":
+            caption_parts.append(f"📅 {html.escape(week_caption)}")
+
+        caption = "\n".join(caption_parts) if caption_parts else "🌊 Текущая ротация волн"
+
+        result = await send_photo_to_telegram(
+            chat_id=chat_id,
+            photo_buffer=screenshot_bytes,
+            caption=caption,
+            message_thread_id=message_thread_id
+        )
+
+        return {
+            "status": "ok",
+            "message": "Скриншот волн успешно отправлен",
+            "telegram_result": result
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка при создании и отправке скриншота волн: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при создании скриншота волн: {str(e)}"
         )
 
 
