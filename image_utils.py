@@ -1,13 +1,15 @@
 # image_utils.py
 # Утилиты для обработки изображений
 
+import mimetypes
 import os
 import shutil
 import tempfile
 from contextlib import contextmanager
-from PIL import Image, ImageOps
-from fastapi import UploadFile
 from typing import Optional
+
+from fastapi import UploadFile
+from PIL import Image, ImageOps
 
 
 def process_image_for_upload(image: Image.Image, output_path: str, quality: int = 85) -> None:
@@ -120,4 +122,69 @@ def temp_image_directory(prefix: str = 'temp_images_'):
                 shutil.rmtree(temp_dir)
             except Exception as e:
                 print(f"Ошибка удаления временной директории: {e}")
+
+
+ALLOWED_VIDEO_MIME_TYPES = {
+    'video/mp4',
+    'video/quicktime',
+    'video/x-m4v',
+    'video/mpeg',
+    'video/webm',
+}
+
+
+def detect_media_type(file: UploadFile) -> Optional[str]:
+    """
+    Определяет тип загруженного файла (изображение или видео).
+    """
+    if not file or not file.content_type:
+        return None
+
+    content_type = file.content_type.lower()
+
+    if content_type.startswith('image/'):
+        return 'photo'
+
+    if content_type in ALLOWED_VIDEO_MIME_TYPES or content_type.startswith('video/'):
+        return 'video'
+
+    return None
+
+
+def guess_media_extension(file: UploadFile, default: str = '.bin') -> str:
+    """
+    Определяет расширение файла на основе имени или MIME-типов.
+    """
+    if file and file.filename:
+        _, ext = os.path.splitext(file.filename)
+        if ext:
+            return ext.lower()
+
+    if file and file.content_type:
+        ext = mimetypes.guess_extension(file.content_type.lower())
+        if ext:
+            return ext.lower()
+
+    return default
+
+
+def save_upload_file(file: UploadFile, destination_path: str) -> None:
+    """
+    Сохраняет загруженный файл в указанное место.
+    """
+    if not file:
+        return
+
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
+
+    with open(destination_path, 'wb') as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
 

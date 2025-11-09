@@ -2,8 +2,11 @@
 # Утилиты для работы с Telegram Bot API
 
 import json
+import os
 import aiohttp
 from typing import Optional, List, Dict, Any
+
+MEDIA_GROUP_LIMIT = 9
 
 
 async def send_telegram_message(
@@ -92,59 +95,87 @@ async def send_telegram_photo(
                 return await response.json()
 
 
-async def send_telegram_media_group(
+async def send_telegram_video(
     bot_token: str,
     chat_id: str,
-    photo_paths: List[str],
+    video_path: str,
+    caption: str = "",
+    reply_markup: Optional[dict] = None,
     message_thread_id: Optional[str] = None
 ) -> dict:
     """
-    Отправляет группу фотографий в Telegram через Bot API.
-    
-    Args:
-        bot_token: Токен бота
-        chat_id: ID чата
-        photo_paths: Список путей к файлам фотографий
-        message_thread_id: ID темы (опционально)
-    
-    Returns:
-        Результат запроса к Telegram API
+    Отправляет видео в Telegram через Bot API.
     """
-    url = f"https://api.telegram.org/bot{bot_token}/sendMediaGroup"
-    
-    media = []
-    for i, photo_path in enumerate(photo_paths):
-        media.append({
-            "type": "photo",
-            "media": f"attach://photo_{i}"
-        })
-    
-    # Открываем все файлы
-    photo_files = []
-    try:
-        for photo_path in photo_paths:
-            photo_files.append(open(photo_path, 'rb'))
-        
+    url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+
+    with open(video_path, 'rb') as video_file:
         data = aiohttp.FormData()
         data.add_field('chat_id', chat_id)
-        data.add_field('media', json.dumps(media))
+        data.add_field('video', video_file, filename=os.path.basename(video_path))
+        data.add_field('caption', caption)
         data.add_field('parse_mode', 'HTML')
-        
+
         if message_thread_id:
             data.add_field('message_thread_id', message_thread_id)
-        
-        # Добавляем файлы в FormData
-        for i, photo_file in enumerate(photo_files):
-            data.add_field(f'photo_{i}', photo_file, filename=f'photo_{i}.jpg')
-        
+
+        if reply_markup:
+            data.add_field('reply_markup', json.dumps(reply_markup))
+
         async with aiohttp.ClientSession() as session:
             async with session.post(url, data=data) as response:
-                result = await response.json()
-                return result
+                return await response.json()
+
+
+async def send_telegram_media_group(
+    bot_token: str,
+    chat_id: str,
+    media_items: List[Dict[str, str]],
+    message_thread_id: Optional[str] = None
+) -> dict:
+    """
+    Отправляет медиагруппу (фото/видео) в Telegram через Bot API.
+    """
+    url = f"https://api.telegram.org/bot{bot_token}/sendMediaGroup"
+
+    media_payload = []
+    file_handles = []
+
+    try:
+        for index, item in enumerate(media_items):
+            attach_id = f'media_{index}'
+            media_payload.append({
+                "type": item.get("type", "photo"),
+                "media": f"attach://{attach_id}"
+            })
+            file_path = item.get("path")
+            if not file_path:
+                continue
+            file_handles.append(open(file_path, 'rb'))
+
+        data = aiohttp.FormData()
+        data.add_field('chat_id', chat_id)
+        data.add_field('media', json.dumps(media_payload))
+        data.add_field('parse_mode', 'HTML')
+
+        if message_thread_id:
+            data.add_field('message_thread_id', message_thread_id)
+
+        for index, file_handle in enumerate(file_handles):
+            filename = os.path.basename(media_items[index].get("path", f'media_{index}'))
+            data.add_field(f'media_{index}', file_handle, filename=filename)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=data) as response:
+                return await response.json()
     finally:
-        # Закрываем все файлы
-        for photo_file in photo_files:
-            photo_file.close()
+        for file_handle in file_handles:
+            file_handle.close()
+
+
+def _chunk_media_items(items: List[Dict[str, str]], chunk_size: int) -> List[List[Dict[str, str]]]:
+    if chunk_size <= 0:
+        return [items]
+    return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
 
 
 async def send_photos_to_telegram_group(
@@ -156,65 +187,92 @@ async def send_photos_to_telegram_group(
     message_thread_id: Optional[str] = None
 ) -> dict:
     """
-    Универсальная функция отправки фото в Telegram группу.
-    
-    Автоматически выбирает между sendPhoto (1 фото) и sendMediaGroup (несколько фото).
-    Обрабатывает reply_to_message_id для медиагрупп.
-    
-    Args:
-        bot_token: Токен бота
-        chat_id: ID чата
-        photo_paths: Список путей к файлам фотографий
-        message_text: Текст сообщения
-        reply_markup: Inline клавиатура (опционально)
-        message_thread_id: ID темы (опционально)
-    
-    Returns:
-        Результат запроса к Telegram API
+    Вспомогательная обёртка для обратной совместимости с кодом, который передаёт только фотографии.
     """
-    if len(photo_paths) == 1:
-        # Одна фотография - отправляем как фото с подписью и кнопками
-        return await send_telegram_photo(
-            bot_token=bot_token,
-            chat_id=chat_id,
-            photo_path=photo_paths[0],
-            caption=message_text,
-            reply_markup=reply_markup,
-            message_thread_id=message_thread_id
-        )
-    elif len(photo_paths) > 1:
-        # Несколько фотографий - сначала медиагруппа, потом текст с кнопками как ответ
-        media_group_result = await send_telegram_media_group(
-            bot_token=bot_token,
-            chat_id=chat_id,
-            photo_paths=photo_paths,
-            message_thread_id=message_thread_id
-        )
-        
-        # Получаем message_id первого сообщения из медиагруппы
-        reply_to_message_id = None
-        if media_group_result.get('ok') and media_group_result.get('result'):
-            # Первое сообщение в медиагруппе - это первое фото
-            reply_to_message_id = media_group_result['result'][0].get('message_id')
-        
-        # Отправляем текстовое сообщение с кнопками как ответ на первое фото
+    media_items = [{"type": "photo", "path": path} for path in photo_paths]
+    return await send_media_to_telegram_group(
+        bot_token=bot_token,
+        chat_id=chat_id,
+        media_items=media_items,
+        message_text=message_text,
+        reply_markup=reply_markup,
+        message_thread_id=message_thread_id,
+    )
+
+
+async def send_media_to_telegram_group(
+    bot_token: str,
+    chat_id: str,
+    media_items: List[Dict[str, str]],
+    message_text: str = "",
+    reply_markup: Optional[dict] = None,
+    message_thread_id: Optional[str] = None
+) -> dict:
+    """
+    Отправляет смешанную медиагруппу (фото и видео), разбивая по лимиту Telegram и добавляя текст.
+    """
+    if not media_items:
         return await send_telegram_message(
             bot_token=bot_token,
             chat_id=chat_id,
             text=message_text,
             reply_markup=reply_markup,
             message_thread_id=message_thread_id,
-            reply_to_message_id=reply_to_message_id
         )
-    else:
-        # Нет фотографий - только текстовое сообщение
-        return await send_telegram_message(
+
+    if len(media_items) == 1:
+        item = media_items[0]
+        media_type = item.get("type", "photo")
+        media_path = item.get("path", "")
+
+        if media_type == 'video':
+            return await send_telegram_video(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                video_path=media_path,
+                caption=message_text,
+                reply_markup=reply_markup,
+                message_thread_id=message_thread_id,
+            )
+
+        return await send_telegram_photo(
             bot_token=bot_token,
             chat_id=chat_id,
-            text=message_text,
+            photo_path=media_path,
+            caption=message_text,
             reply_markup=reply_markup,
-            message_thread_id=message_thread_id
+            message_thread_id=message_thread_id,
         )
+
+    batches = _chunk_media_items(media_items, MEDIA_GROUP_LIMIT)
+    first_message_id: Optional[int] = None
+    last_response: Optional[dict] = None
+
+    for batch in batches:
+        batch_result = await send_telegram_media_group(
+            bot_token=bot_token,
+            chat_id=chat_id,
+            media_items=batch,
+            message_thread_id=message_thread_id,
+        )
+
+        if first_message_id is None and batch_result.get('ok') and batch_result.get('result'):
+            first_message = batch_result['result'][0]
+            first_message_id = first_message.get('message_id')
+
+        last_response = batch_result
+
+    if not message_text:
+        return last_response or {"ok": True}
+
+    return await send_telegram_message(
+        bot_token=bot_token,
+        chat_id=chat_id,
+        text=message_text,
+        reply_markup=reply_markup,
+        message_thread_id=message_thread_id,
+        reply_to_message_id=first_message_id,
+    )
 
 
 async def get_chat_member(

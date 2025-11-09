@@ -24,8 +24,16 @@ from playwright.async_api import async_playwright
 # Импортируем наши модули
 from security import validate_init_data, get_user_id_from_init_data
 from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments, toggle_reaction, get_reactions, update_avatar_url, update_build_photos, get_trophies, add_trophy, update_active_trophies
-from image_utils import process_image_for_upload, process_avatar_image, validate_image_file, temp_image_directory
-from telegram_utils import send_telegram_message, send_photos_to_telegram_group, get_chat_member
+from image_utils import (
+    process_image_for_upload,
+    process_avatar_image,
+    validate_image_file,
+    temp_image_directory,
+    detect_media_type,
+    guess_media_extension,
+    save_upload_file,
+)
+from telegram_utils import send_telegram_message, send_photos_to_telegram_group, send_media_to_telegram_group, get_chat_member
 from user_utils import get_user_with_psn, format_profile_response
 from mastery_utils import find_category_by_key, parse_tags
 from mastery_config import load_mastery_config
@@ -62,6 +70,9 @@ ASSETS_PREFIX = "/assets/assets"
 
 # Удалены кеш и загрузка данных трофеев
 # Функции для работы с Telegram Bot API перенесены в telegram_utils.py
+
+MAX_MEDIA_ATTACHMENTS = 18
+TELEGRAM_MEDIA_BATCH_LIMIT = 9
 
 # Проверяем обязательные переменные
 if not BOT_TOKEN:
@@ -1482,25 +1493,29 @@ async def submit_mastery_application(
     max_levels = category.get('maxLevels', 0)
     
     # Валидация
-    if photos is None or len(photos) == 0:
+    media_files = photos or []
+
+    if len(media_files) == 0:
         raise HTTPException(
             status_code=400,
-            detail="Необходимо прикрепить хотя бы одно изображение"
+            detail="Необходимо прикрепить хотя бы один файл (изображение или видео)"
         )
     
-    if len(photos) > 9:
+    if len(media_files) > MAX_MEDIA_ATTACHMENTS:
         raise HTTPException(
             status_code=400,
-            detail="Можно прикрепить не более 9 изображений"
+            detail=f"Можно прикрепить не более {MAX_MEDIA_ATTACHMENTS} файлов"
         )
     
-    # Проверяем что все файлы - изображения
-    for photo in photos:
-        if not validate_image_file(photo):
+    normalized_media = []
+    for upload in media_files:
+        media_kind = detect_media_type(upload)
+        if media_kind not in {'photo', 'video'}:
             raise HTTPException(
                 status_code=400,
-                detail="Разрешены только изображения"
+                detail="Разрешены только изображения и видео (MP4, MOV)."
             )
+        normalized_media.append((upload, media_kind))
     
     # Валидация уровней
     if next_level != current_level + 1:
@@ -1573,28 +1588,45 @@ async def submit_mastery_application(
     # Обрабатываем и отправляем фотографии
     try:
         with temp_image_directory(prefix='mastery_app_') as temp_dir:
-            photo_paths = []
+            media_payload = []
             
-            # Обрабатываем и сохраняем изображения
-            for i, photo in enumerate(photos):
-                photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
-                
-                # Открываем изображение через Pillow
-                image = Image.open(photo.file)
-                
-                # Обрабатываем изображение
-                process_image_for_upload(image, photo_path)
-                photo_paths.append(photo_path)
-                
-                # Возвращаем курсор файла
-                photo.file.seek(0)
+            for index, (upload, media_kind) in enumerate(normalized_media, start=1):
+                if media_kind == 'photo':
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+
+                    photo_path = os.path.join(temp_dir, f'media_{index}.jpg')
+                    image = Image.open(upload.file)
+                    process_image_for_upload(image, photo_path)
+                    media_payload.append({
+                        "type": "photo",
+                        "path": photo_path,
+                    })
+
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+                else:
+                    extension = guess_media_extension(upload, default='.mp4')
+                    if not extension.startswith('.'):
+                        extension = f'.{extension}'
+
+                    video_path = os.path.join(temp_dir, f'media_{index}{extension}')
+                    save_upload_file(upload, video_path)
+                    media_payload.append({
+                        "type": "video",
+                        "path": video_path,
+                    })
             
             # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
             try:
-                await send_photos_to_telegram_group(
+                await send_media_to_telegram_group(
                     bot_token=BOT_TOKEN,
                     chat_id=TROPHY_GROUP_CHAT_ID,
-                    photo_paths=photo_paths,
+                    media_items=media_payload,
                     message_text=message_text,
                     reply_markup=reply_markup,
                     message_thread_id=TROPHY_GROUP_TOPIC_ID
@@ -2037,25 +2069,29 @@ async def submit_trophy_application(
         )
     
     # Валидация
-    if photos is None or len(photos) == 0:
+    media_files = photos or []
+
+    if len(media_files) == 0:
         raise HTTPException(
             status_code=400,
-            detail="Необходимо прикрепить хотя бы одно изображение"
+            detail="Необходимо прикрепить хотя бы один файл (изображение или видео)"
         )
     
-    if len(photos) > 9:
+    if len(media_files) > MAX_MEDIA_ATTACHMENTS:
         raise HTTPException(
             status_code=400,
-            detail="Можно прикрепить не более 9 изображений"
+            detail=f"Можно прикрепить не более {MAX_MEDIA_ATTACHMENTS} файлов"
         )
     
-    # Проверяем что все файлы - изображения
-    for photo in photos:
-        if not validate_image_file(photo):
+    normalized_media = []
+    for upload in media_files:
+        media_kind = detect_media_type(upload)
+        if media_kind not in {'photo', 'video'}:
             raise HTTPException(
                 status_code=400,
-                detail="Разрешены только изображения"
+                detail="Разрешены только изображения и видео (MP4, MOV)."
             )
+        normalized_media.append((upload, media_kind))
     
     # Формируем сообщение для группы
     trophy_name = trophy.get('name', trophy_key)
@@ -2095,28 +2131,45 @@ async def submit_trophy_application(
     # Обрабатываем и отправляем фотографии
     try:
         with temp_image_directory(prefix='trophy_app_') as temp_dir:
-            photo_paths = []
+            media_payload = []
             
-            # Обрабатываем и сохраняем изображения
-            for i, photo in enumerate(photos):
-                photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
-                
-                # Открываем изображение через Pillow
-                image = Image.open(photo.file)
-                
-                # Обрабатываем изображение
-                process_image_for_upload(image, photo_path)
-                photo_paths.append(photo_path)
-                
-                # Возвращаем курсор файла
-                photo.file.seek(0)
+            for index, (upload, media_kind) in enumerate(normalized_media, start=1):
+                if media_kind == 'photo':
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+
+                    photo_path = os.path.join(temp_dir, f'media_{index}.jpg')
+                    image = Image.open(upload.file)
+                    process_image_for_upload(image, photo_path)
+                    media_payload.append({
+                        "type": "photo",
+                        "path": photo_path,
+                    })
+
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+                else:
+                    extension = guess_media_extension(upload, default='.mp4')
+                    if not extension.startswith('.'):
+                        extension = f'.{extension}'
+
+                    video_path = os.path.join(temp_dir, f'media_{index}{extension}')
+                    save_upload_file(upload, video_path)
+                    media_payload.append({
+                        "type": "video",
+                        "path": video_path,
+                    })
             
             # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
             try:
-                await send_photos_to_telegram_group(
+                await send_media_to_telegram_group(
                     bot_token=BOT_TOKEN,
                     chat_id=TROPHY_GROUP_CHAT_ID,
-                    photo_paths=photo_paths,
+                    media_items=media_payload,
                     message_text=message_text,
                     reply_markup=reply_markup,
                     message_thread_id=TROPHY_GROUP_TOPIC_ID
