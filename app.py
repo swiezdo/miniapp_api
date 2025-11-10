@@ -1443,7 +1443,7 @@ async def get_mastery_levels(
         user_id: ID текущего пользователя (из dependency, для проверки авторизации)
     
     Returns:
-        Словарь с уровнями по категориям: {"solo": 0, "hellmode": 0, "raid": 0, "speedrun": 0}
+        Словарь с уровнями по категориям: {"solo": 0, "hellmode": 0, "raid": 0, "speedrun": 0, "glitch": 0}
     """
     try:
         # Если указан target_user_id, используем его, иначе берем текущего пользователя
@@ -2371,7 +2371,7 @@ async def get_profile_preview(user_id: int):
     
     if mastery_config and mastery_levels:
         # Порядок категорий
-        category_order = ['solo', 'hellmode', 'raid', 'speedrun']
+        category_order = ['solo', 'hellmode', 'raid', 'speedrun', 'glitch']
         
         for category_key in category_order:
             current_level = mastery_levels.get(category_key, 0)
@@ -2414,7 +2414,7 @@ async def get_profile_preview(user_id: int):
     )
 
     trophies_list = trophies_data.get('trophies', []) if trophies_data else []
-    mastery_trophy_keys = {'solo', 'hellmode', 'raid', 'speedrun'}
+    mastery_trophy_keys = {'solo', 'hellmode', 'raid', 'speedrun', 'glitch'}
     filtered_trophies = sorted([key for key in trophies_list if key not in mastery_trophy_keys])
 
     trophy_names = []

@@ -179,7 +179,8 @@ miniapp_api/
   - `build_id` (PRIMARY KEY AUTOINCREMENT), `user_id`, `author`, `name`, `class`, `tags`, `description`, `photo_1`, `photo_2`, `created_at`, `is_public`
   
 - **mastery**: уровни мастерства
-  - `user_id` (PRIMARY KEY), `solo`, `hellmode`, `raid`, `speedrun`
+  - `user_id` (PRIMARY KEY), `solo`, `hellmode`, `raid`, `speedrun`, `glitch`
+  - При инициализации выполняется `ALTER TABLE`, чтобы добавить колонку `glitch` в существующие БД
   
 - **comments**: комментарии к билдам
   - `comment_id` (PRIMARY KEY AUTOINCREMENT), `build_id`, `user_id`, `comment_text`, `created_at`

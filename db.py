@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from typing import Dict, Optional, Any, List
 
 # Константы
-MASTERY_CATEGORIES = ["solo", "hellmode", "raid", "speedrun"]
+MASTERY_CATEGORIES = ["solo", "hellmode", "raid", "speedrun", "glitch"]
 BUILD_UPDATE_FIELDS = {"name", "class", "tags", "description", "photo_1", "photo_2"}
 
 
@@ -216,6 +216,7 @@ def init_db(db_path: str) -> None:
                 hellmode INTEGER NOT NULL DEFAULT 0,
                 raid INTEGER NOT NULL DEFAULT 0,
                 speedrun INTEGER NOT NULL DEFAULT 0,
+                glitch INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(user_id) REFERENCES users(user_id)
             )
         ''')
@@ -224,6 +225,15 @@ def init_db(db_path: str) -> None:
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_mastery_user_id ON mastery(user_id)
         ''')
+
+        # Убеждаемся, что в таблице mastery есть колонка glitch (для старых БД)
+        try:
+            cursor.execute("PRAGMA table_info(mastery)")
+            mastery_columns = [column_info[1] for column_info in cursor.fetchall()]
+            if 'glitch' not in mastery_columns:
+                cursor.execute('ALTER TABLE mastery ADD COLUMN glitch INTEGER NOT NULL DEFAULT 0')
+        except sqlite3.Error:
+            pass
         
         # Создаем таблицу comments
         cursor.execute('''
@@ -411,8 +421,8 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 # Убеждаемся что запись в mastery существует (создаём если её нет)
                 if not mastery_exists:
                     cursor.execute('''
-                        INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun)
-                        VALUES (?, 0, 0, 0, 0)
+                        INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun, glitch)
+                        VALUES (?, 0, 0, 0, 0, 0)
                     ''', (user_id,))
                 
                 # Обновляем psn_id в trophies если запись существует
@@ -441,8 +451,8 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 # Автоматически создаём запись в mastery для нового пользователя (только если её нет)
                 if not mastery_exists:
                     cursor.execute('''
-                        INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun)
-                        VALUES (?, 0, 0, 0, 0)
+                        INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun, glitch)
+                        VALUES (?, 0, 0, 0, 0, 0)
                     ''', (user_id,))
                 
                 # Автоматически создаём запись в trophies для нового пользователя (только если её нет)
@@ -1029,7 +1039,8 @@ def get_all_users(db_path: str) -> List[Dict[str, Any]]:
                        COALESCE(m.solo, 0) as solo,
                        COALESCE(m.hellmode, 0) as hellmode,
                        COALESCE(m.raid, 0) as raid,
-                       COALESCE(m.speedrun, 0) as speedrun
+                       COALESCE(m.speedrun, 0) as speedrun,
+                       COALESCE(m.glitch, 0) as glitch
                 FROM users u
                 LEFT JOIN mastery m ON u.user_id = m.user_id
                 WHERE u.psn_id IS NOT NULL AND u.psn_id != ''
@@ -1048,7 +1059,8 @@ def get_all_users(db_path: str) -> List[Dict[str, Any]]:
                         'solo': row[3],
                         'hellmode': row[4],
                         'raid': row[5],
-                        'speedrun': row[6]
+                        'speedrun': row[6],
+                        'glitch': row[7]
                     }
                 })
             
@@ -1080,7 +1092,7 @@ def get_mastery(db_path: str, user_id: int) -> Dict[str, int]:
                 return default_mastery
             
             cursor.execute('''
-                SELECT solo, hellmode, raid, speedrun
+                SELECT solo, hellmode, raid, speedrun, glitch
                 FROM mastery WHERE user_id = ?
             ''', (user_id,))
             
@@ -1093,7 +1105,8 @@ def get_mastery(db_path: str, user_id: int) -> Dict[str, int]:
                 "solo": row[0],
                 "hellmode": row[1],
                 "raid": row[2],
-                "speedrun": row[3]
+                "speedrun": row[3],
+                "glitch": row[4]
             }
         
     except sqlite3.Error as e:
@@ -1109,8 +1122,8 @@ def set_mastery(db_path: str, user_id: int, category: str, level: int) -> bool:
     Args:
         db_path: Путь к файлу базы данных
         user_id: ID пользователя
-        category: Категория (solo, hellmode, raid, speedrun)
-        level: Уровень (0-5)
+        category: Категория (solo, hellmode, raid, speedrun, glitch)
+        level: Уровень (0-11)
     
     Returns:
         True при успешном сохранении, иначе False
@@ -1132,7 +1145,8 @@ def set_mastery(db_path: str, user_id: int, category: str, level: int) -> bool:
                 'solo': 'solo',
                 'hellmode': 'hellmode',
                 'raid': 'raid',
-                'speedrun': 'speedrun'
+                'speedrun': 'speedrun',
+                'glitch': 'glitch'
             }
             
             db_field = category_mapping.get(category)
@@ -1143,25 +1157,29 @@ def set_mastery(db_path: str, user_id: int, category: str, level: int) -> bool:
                 # Обновляем существующую запись
                 # Используем безопасный подход - обновляем все поля, но только нужное меняем
                 # Получаем текущие значения
-                cursor.execute('SELECT solo, hellmode, raid, speedrun FROM mastery WHERE user_id = ?', (user_id,))
+                cursor.execute('SELECT solo, hellmode, raid, speedrun, glitch FROM mastery WHERE user_id = ?', (user_id,))
                 current_row = cursor.fetchone()
+                if not current_row:
+                    current_row = (0, 0, 0, 0, 0)
                 current_values = {
                     'solo': current_row[0],
                     'hellmode': current_row[1],
                     'raid': current_row[2],
-                    'speedrun': current_row[3]
+                    'speedrun': current_row[3],
+                    'glitch': current_row[4]
                 }
                 # Обновляем только нужное поле
                 current_values[db_field] = level
                 cursor.execute('''
                     UPDATE mastery 
-                    SET solo = ?, hellmode = ?, raid = ?, speedrun = ?
+                    SET solo = ?, hellmode = ?, raid = ?, speedrun = ?, glitch = ?
                     WHERE user_id = ?
                 ''', (
                     current_values['solo'],
                     current_values['hellmode'],
                     current_values['raid'],
                     current_values['speedrun'],
+                    current_values['glitch'],
                     user_id
                 ))
             else:
@@ -1169,14 +1187,15 @@ def set_mastery(db_path: str, user_id: int, category: str, level: int) -> bool:
                 # Используем INSERT с явным указанием всех полей
                 mastery_values = {cat: level if cat == category else 0 for cat in MASTERY_CATEGORIES}
                 cursor.execute('''
-                    INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun, glitch)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     user_id,
                     mastery_values['solo'],
                     mastery_values['hellmode'],
                     mastery_values['raid'],
-                    mastery_values['speedrun']
+                    mastery_values['speedrun'],
+                    mastery_values['glitch']
                 ))
             
             return True

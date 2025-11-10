@@ -74,7 +74,9 @@ cursor.execute(f'UPDATE builds SET {field_name} = ? WHERE ...', (value,))  # SQL
 
 - **users**: профили пользователей (user_id, real_name, psn_id, platforms, modes, goals, difficulties, avatar_url)
 - **builds**: билды (build_id, user_id, author, name, class, tags, description, photo_1, photo_2, created_at, is_public)
-- **mastery**: уровни мастерства (user_id, solo, hellmode, raid, speedrun)
+- **mastery**: уровни мастерства (user_id, solo, hellmode, raid, speedrun, glitch)
+  - `init_db()` автоматически добавляет колонку `glitch` в существующие базы через `ALTER TABLE`
+- Константа `MASTERY_CATEGORIES` в `db.py` = `["solo", "hellmode", "raid", "speedrun", "glitch"]` — используйте её вместо ручных списков
 - **comments**: комментарии к билдам (comment_id, build_id, user_id, comment_text, created_at)
 - **build_reactions**: лайки/дизлайки (reaction_id, build_id, user_id, reaction_type, created_at)
 
