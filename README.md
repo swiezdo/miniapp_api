@@ -135,6 +135,7 @@ miniapp_api/
 - `POST /api/mastery.submitApplication` - подача заявки на повышение уровня
 - `POST /api/mastery.approve` - одобрение заявки (только для бота, авторизация через Authorization header)
 - `POST /api/mastery.reject` - отклонение заявки (только для бота, авторизация через Authorization header)
+- `DELETE /api/users/{user_id}` - полное удаление данных пользователя (только для бота, авторизация через Authorization header)
 
 ### Другое
 
@@ -142,7 +143,8 @@ miniapp_api/
 - `GET /api/stats` - статистика API (количество пользователей)
 - `POST /api/feedback.submit` - отправка отзыва/баг-репорта
 - `GET /profile-preview/{user_id}` - HTML страница для скриншота профиля
-- `POST /api/send_profile/{user_id}` - создание и отправка скриншота профиля в Telegram
+- `POST /api/send_profile/{user_id}` - создание и отправка скриншота профиля в Telegram (базовый URL выбирается автоматически)
+- `POST /api/send_waves` - создание и отправка скриншота текущей ротации волн (базовый URL выбирается автоматически)
 
 ## Безопасность
 

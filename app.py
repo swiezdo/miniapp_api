@@ -5,7 +5,7 @@
 import os
 import shutil
 import json
-import requests
+import aiohttp
 import tempfile
 import sqlite3
 import io
@@ -23,7 +23,29 @@ from playwright.async_api import async_playwright
 
 # Импортируем наши модули
 from security import validate_init_data, get_user_id_from_init_data
-from db import init_db, get_user, upsert_user, create_build, get_build, get_user_builds, update_build_visibility, delete_build, update_build, get_all_users, get_mastery, create_comment, get_build_comments, toggle_reaction, get_reactions, update_avatar_url, update_build_photos, get_trophies, add_trophy, update_active_trophies
+from db import (
+    init_db,
+    get_user,
+    upsert_user,
+    create_build,
+    get_build,
+    get_user_builds,
+    update_build_visibility,
+    delete_build,
+    update_build,
+    get_all_users,
+    get_mastery,
+    create_comment,
+    get_build_comments,
+    toggle_reaction,
+    get_reactions,
+    update_avatar_url,
+    update_build_photos,
+    get_trophies,
+    add_trophy,
+    update_active_trophies,
+    delete_user_all_data,
+)
 from image_utils import (
     process_image_for_upload,
     process_avatar_image,
@@ -1660,6 +1682,32 @@ def verify_bot_authorization(authorization: Optional[str] = Header(None)) -> boo
     return token == BOT_TOKEN
 
 
+@app.delete("/api/users/{user_id}")
+async def delete_user_data_endpoint(
+    user_id: int,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Удаляет все данные пользователя (профиль, билды, трофеи).
+    Вызывается ботом при выходе пользователя из группы.
+    """
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+
+    try:
+        success = delete_user_all_data(DB_PATH, user_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        return {"status": "ok", "user_id": user_id}
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при удалении данных пользователя: {error}",
+        )
+
+
 @app.post("/api/mastery.approve")
 async def approve_mastery_application(
     user_id: int = Form(...),
@@ -2700,45 +2748,40 @@ async def screenshot_waves(base_url: str = "http://localhost:8000") -> bytes:
             await browser.close()
 
 
-async def send_photo_to_telegram(chat_id: str, photo_buffer: bytes, caption: str = "", message_thread_id: Optional[int] = None) -> dict:
+async def send_photo_to_telegram(
+    chat_id: str,
+    photo_buffer: bytes,
+    caption: str = "",
+    message_thread_id: Optional[int] = None,
+) -> dict:
     """
-    Отправляет фото в Telegram через Bot API используя requests.
-    
-    Args:
-        chat_id: ID чата для отправки
-        photo_buffer: Буфер с изображением (PNG bytes)
-        caption: Подпись к фото
-        message_thread_id: ID темы (если есть)
-    
-    Returns:
-        Результат запроса к Telegram API
+    Отправляет фото в Telegram через Bot API.
     """
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     
-    # Подготавливаем данные для отправки
-    files = {
-        'photo': ('profile.png', io.BytesIO(photo_buffer), 'image/png')
-    }
-    
-    data = {
-        'chat_id': chat_id,
-        'caption': caption,
-        'parse_mode': 'HTML'
-    }
-    
-    if message_thread_id:
-        data['message_thread_id'] = message_thread_id
-    
-    # Отправляем запрос
-    response = requests.post(url, files=files, data=data, timeout=30)
-    
-    if not response.ok:
-        raise HTTPException(
-            status_code=response.status_code,
-            detail=f"Telegram API error: {response.text}"
-        )
-    
-    return response.json()
+    form = aiohttp.FormData()
+    form.add_field("chat_id", chat_id)
+    form.add_field("caption", caption)
+    form.add_field("parse_mode", "HTML")
+    if message_thread_id is not None:
+        form.add_field("message_thread_id", str(message_thread_id))
+    form.add_field(
+        "photo",
+        io.BytesIO(photo_buffer),
+        filename="screenshot.png",
+        content_type="image/png",
+    )
+
+    timeout = aiohttp.ClientTimeout(total=20, connect=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(url, data=form) as response:
+            if response.status >= 400:
+                text = await response.text()
+                raise HTTPException(
+                    status_code=response.status,
+                    detail=f"Telegram API error: {text}",
+                )
+            return await response.json()
 
 
 @app.post("/api/send_profile/{user_id}")
@@ -2746,7 +2789,7 @@ async def send_profile_screenshot(
     user_id: int,
     chat_id: str = Query(..., description="ID чата для отправки фото"),
     message_thread_id: Optional[int] = Query(None, description="ID темы (если есть)"),
-    base_url: Optional[str] = Query(None, description="Базовый URL сервера (по умолчанию localhost:8000)")
+    base_url: Optional[str] = Query(None, description="Базовый URL сервера для скриншота"),
 ):
     """
     Создает скриншот профиля пользователя и отправляет его в Telegram.
@@ -2761,11 +2804,7 @@ async def send_profile_screenshot(
         JSON с результатом операции
     """
     try:
-        # Определяем базовый URL
-        if not base_url:
-            # Используем localhost для скриншота, так как Playwright работает локально
-            # Внешний API_BASE_URL может быть недоступен изнутри сервера
-            base_url = "http://localhost:8000"
+        internal_base_url = base_url or os.getenv("SCREENSHOT_BASE_URL", "http://localhost:8000")
         
         # Проверяем существование профиля
         profile = get_user(DB_PATH, user_id)
@@ -2773,7 +2812,7 @@ async def send_profile_screenshot(
             raise HTTPException(status_code=404, detail="Профиль не найден")
         
         # Создаем скриншот
-        screenshot_bytes = await screenshot_profile(user_id, base_url)
+        screenshot_bytes = await screenshot_profile(user_id, internal_base_url)
         
         # Формируем подпись
         caption_parts = []
@@ -2812,7 +2851,7 @@ async def send_profile_screenshot(
 async def send_waves_screenshot(
     chat_id: str = Query(..., description="ID чата для отправки фото"),
     message_thread_id: Optional[int] = Query(None, description="ID темы (если есть)"),
-    base_url: Optional[str] = Query(None, description="Базовый URL сервера (по умолчанию localhost:8000)")
+    base_url: Optional[str] = Query(None, description="Базовый URL сервера для скриншота"),
 ):
     """
     Создает скриншот текущей ротации волн и отправляет его в Telegram.
@@ -2820,8 +2859,8 @@ async def send_waves_screenshot(
     try:
         waves_data = _read_waves_json()
 
-        effective_base = base_url or "http://localhost:8000"
-        screenshot_bytes = await screenshot_waves(effective_base)
+        internal_base_url = base_url or os.getenv("SCREENSHOT_BASE_URL", "http://localhost:8000")
+        screenshot_bytes = await screenshot_waves(internal_base_url)
 
         caption_parts: List[str] = []
         map_name = waves_data.get("map")
