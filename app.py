@@ -2419,70 +2419,60 @@ async def get_profile_preview(user_id: int):
             avatar_html
         )
     
-    # Генерируем текстовый список мастерства
-    mastery_list = []
-    
-    if mastery_config and mastery_levels:
-        # Порядок категорий
-        category_order = ['solo', 'hellmode', 'raid', 'speedrun', 'glitch']
-        
-        for category_key in category_order:
-            current_level = mastery_levels.get(category_key, 0)
-            
-            # Пропускаем категории с нулевым уровнем
-            if current_level == 0:
-                continue
-            
-            # Находим категорию в конфиге
-            category = None
-            for cat in mastery_config.get('categories', []):
-                if cat.get('key') == category_key:
-                    category = cat
-                    break
-            
-            if not category:
-                continue
-            
-            max_levels = category.get('maxLevels', 0)
-            
-            # Находим данные уровня
-            level_data = None
-            for level in category.get('levels', []):
-                if level.get('level') == current_level:
-                    level_data = level
-                    break
-            
-            level_name = level_data.get('name', f'Уровень {current_level}') if level_data else f'Уровень {current_level}'
-            category_name = category.get('name', category_key)
-            
-            # Формат: "Категория (уровень/макс Уровень) - Название уровня"
-            mastery_item = f"{category_name} ({current_level}/{max_levels}) - {level_name}"
-            mastery_list.append(mastery_item)
-    
-    # Вставляем список мастерства
-    mastery_text = "\n".join(mastery_list) if mastery_list else "—"
+    # Генерируем визуальное представление мастерства
+    mastery_tiles_html: list[str] = []
+    categories_by_key: dict[str, Any] = {}
+    if mastery_config and isinstance(mastery_config, dict):
+        categories_by_key = {
+            cat.get('key'): cat for cat in mastery_config.get('categories', []) if isinstance(cat, dict)
+        }
+
+    category_order = ['solo', 'hellmode', 'raid', 'speedrun', 'glitch']
+    if mastery_levels:
+        for extra_key in mastery_levels.keys():
+            if extra_key not in category_order:
+                category_order.append(extra_key)
+
+    for category_key in category_order:
+        category = categories_by_key.get(category_key, {})
+        max_levels = category.get('maxLevels', 0) or 0
+        current_level = mastery_levels.get(category_key, 0) if mastery_levels else 0
+
+        classes: list[str] = ["mastery-tile"]
+        progress_ratio = 0.0
+
+        if max_levels > 0:
+            progress_ratio = min(max(current_level / max_levels, 0.0), 1.0)
+            if current_level >= max_levels:
+                classes.append("maxed")
+                progress_ratio = 1.0
+            elif current_level > 0:
+                classes.append("partial")
+        elif current_level > 0:
+            progress_ratio = 1.0
+            classes.append("maxed")
+
+        if current_level <= 0:
+            classes.append("locked")
+
+        icon_path = f"{ASSETS_PREFIX}/mastery/{category_key}/icon.svg"
+        tile_inner = (
+            f'<div class="mastery-ring" data-progress="{progress_ratio:.4f}" style="--progress: {progress_ratio:.4f};"></div>'
+            f'<div class="mastery-icon" style="background-image: url(\'{icon_path}\');"></div>'
+        )
+        mastery_tiles_html.append(
+            f'<div class="{' '.join(classes)}">{tile_inner}</div>'
+        )
+
+    mastery_tiles_html = [tile for tile in mastery_tiles_html if tile]
+    if not mastery_tiles_html:
+        mastery_tiles_html.append('<div class="mastery-empty">—</div>')
+
+    mastery_grid_placeholder = '<div id="mastery-grid" class="mastery-grid"></div>'
+    mastery_grid_html = ''.join(mastery_tiles_html)
     html_content = html_content.replace(
-        '<div id="v_mastery" class="value lines">—</div>',
-        f'<div id="v_mastery" class="value lines">{mastery_text}</div>'
-    )
-
-    trophies_list = trophies_data.get('trophies', []) if trophies_data else []
-    mastery_trophy_keys = {'solo', 'hellmode', 'raid', 'speedrun', 'glitch'}
-    filtered_trophies = sorted([key for key in trophies_list if key not in mastery_trophy_keys])
-
-    trophy_names = []
-    if filtered_trophies:
-        if trophy_config:
-            for key in filtered_trophies:
-                trophy = find_trophy_by_key(trophy_config, key)
-                trophy_names.append(trophy.get('name', key) if trophy else key)
-        else:
-            trophy_names = filtered_trophies[:]
-
-    trophies_text = "\n".join(trophy_names) if trophy_names else "—"
-    html_content = html_content.replace(
-        '<div id="v_trophies" class="value lines">—</div>',
-        f'<div id="v_trophies" class="value lines">{trophies_text}</div>'
+        mastery_grid_placeholder,
+        f'<div id="mastery-grid" class="mastery-grid">{mastery_grid_html}</div>'
     )
     
     # Добавляем скрипт для сигнала готовности (данные уже заполнены)
@@ -2536,6 +2526,65 @@ async def get_profile_preview(user_id: int):
                 const readyElFinal = document.getElementById('profile-ready');
                 if (readyElFinal) {
                     readyElFinal.setAttribute('data-ready', 'true');
+                }
+            })();
+        </script>
+    """
+    
+    # Заменяем placeholder script блок
+    html_content = re.sub(
+        r'<script>\s*// Placeholder.*?</script>',
+        script_replacement,
+        html_content,
+        flags=re.DOTALL
+    )
+    
+    # Если не нашли placeholder, добавляем скрипт перед закрывающим тегом body
+    if 'data-ready' not in html_content:
+        html_content = html_content.replace('</body>', script_replacement + '\n</body>')
+    
+    trophies_list = trophies_data.get('trophies', []) if trophies_data else []
+    mastery_trophy_keys = {'solo', 'hellmode', 'raid', 'speedrun', 'glitch'}
+    filtered_trophies = [key for key in trophies_list if key not in mastery_trophy_keys]
+
+    trophy_tiles: list[str] = []
+    all_trophies: list[dict] = []
+    if trophy_config and isinstance(trophy_config, dict):
+        all_trophies = trophy_config.get('trophies', []) or []
+
+    earned_set = set(filtered_trophies)
+
+    for trophy in all_trophies:
+        key = trophy.get('key')
+        if not key:
+            continue
+        trophy_name = trophy.get('name', key)
+        icon_path = f"{ASSETS_PREFIX}/trophies/{key}.svg"
+        classes = ["trophy-card"]
+        if key not in earned_set:
+            classes.append("trophy-card--locked")
+        trophy_tiles.append(
+            f'<div class="{' '.join(classes)}"><img src="{icon_path}" alt="{html.escape(str(trophy_name))}" /></div>'
+        )
+
+    if not trophy_tiles:
+        trophy_tiles.append('<div class="mastery-empty">—</div>')
+
+    trophy_grid_placeholder = '<div id="v_trophies" class="value lines">—</div>'
+    trophy_grid_html = ''.join(trophy_tiles)
+    html_content = html_content.replace(
+        trophy_grid_placeholder,
+        f'<div id="trophy-grid" class="trophy-grid">{trophy_grid_html}</div>'
+    )
+
+    # Добавляем скрипт для сигнала готовности (данные уже заполнены)
+    script_replacement = """
+        <script>
+            // Данные уже заполнены в HTML, просто сигнализируем готовность
+            (function() {
+                const readyEl = document.getElementById('trophy-grid');
+                if (readyEl) {
+                    readyEl.setAttribute('data-ready', 'true');
                 }
             })();
         </script>
