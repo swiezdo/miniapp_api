@@ -54,6 +54,7 @@ playwright install chromium
 ```env
 BOT_TOKEN=your_telegram_bot_token
 ALLOWED_ORIGIN=https://swiezdo.github.io
+SCREENSHOT_BASE_URL=https://api.tsushimaru.com
 DB_PATH=/root/miniapp_api/app.db
 TROPHY_GROUP_CHAT_ID=-1002348168326
 TROPHY_GROUP_TOPIC_ID=5675
