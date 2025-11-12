@@ -53,7 +53,7 @@ playwright install chromium
 Создайте файл `.env` в корне проекта:
 ```env
 BOT_TOKEN=your_telegram_bot_token
-ALLOWED_ORIGIN=https://swiezdo.github.io
+ALLOWED_ORIGIN=https://tsushimaru.com
 SCREENSHOT_BASE_URL=https://api.tsushimaru.com
 DB_PATH=/root/miniapp_api/app.db
 TROPHY_GROUP_CHAT_ID=-1002348168326
@@ -168,7 +168,7 @@ miniapp_api/
 
 ### CORS
 
-- Настроен для домена GitHub Pages (`https://swiezdo.github.io`)
+- Настроен для домена продакшн-сайта (`https://tsushimaru.com`)
 - Поддержка localhost для разработки
 
 ## База данных

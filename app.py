@@ -73,7 +73,12 @@ app = FastAPI(
 
 # Получаем конфигурацию из .env
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN")
+raw_allowed_origins = os.getenv("ALLOWED_ORIGIN", "")
+ALLOWED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in raw_allowed_origins.split(",")
+    if origin.strip()
+]
 DB_PATH = os.getenv("DB_PATH", "/root/miniapp_api/app.db")
 
 # Параметры для отправки уведомлений/сообщений
@@ -99,13 +104,13 @@ TELEGRAM_MEDIA_BATCH_LIMIT = 9
 # Проверяем обязательные переменные
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не установлен в .env файле")
-if not ALLOWED_ORIGIN:
-    raise ValueError("ALLOWED_ORIGIN не установлен в .env файле")
+if not ALLOWED_ORIGINS:
+    raise ValueError("ALLOWED_ORIGIN не установлен или пуст в .env файле")
 
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://swiezdo.github.io", "http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
