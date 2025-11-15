@@ -12,6 +12,8 @@ import io
 import html
 import traceback
 import re
+import time
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Depends, Header, Form, File, UploadFile, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
@@ -55,7 +57,7 @@ from image_utils import (
     guess_media_extension,
     save_upload_file,
 )
-from telegram_utils import send_telegram_message, send_photos_to_telegram_group, send_media_to_telegram_group, get_chat_member
+from telegram_utils import send_telegram_message, send_media_to_telegram_group, get_chat_member
 from user_utils import get_user_with_psn, format_profile_response
 from mastery_utils import find_category_by_key, parse_tags
 from mastery_config import load_mastery_config
@@ -93,7 +95,7 @@ WAVES_FILE_PATH = "/root/gyozenbot/json/waves.json"
 WAVES_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'waves_preview.html')
 OBJECTIVE_WAVE_NUMBERS = [2, 4, 7, 10, 13]
 MOD_WAVE_NUMBERS = [3, 6, 9, 12, 15]
-ASSETS_PREFIX = "/assets/assets"
+ASSETS_PREFIX = "/assets"
 
 # Удалены кеш и загрузка данных трофеев
 # Функции для работы с Telegram Bot API перенесены в telegram_utils.py
@@ -141,13 +143,13 @@ async def filter_bot_requests(request: Request, call_next):
     
     return await call_next(request)
 
+# Раздача статических файлов для preview страниц
+app.mount("/css", StaticFiles(directory="/root/tsushimaru_app/docs/css"), name="css")
+app.mount("/assets", StaticFiles(directory="/root/tsushimaru_app/docs/assets"), name="assets")
+
 # Инициализируем базу данных при запуске
 init_db(DB_PATH)
 
-# Настраиваем статические файлы для ассетов (мастерство и другие)
-tsushimaru_docs_path = "/root/tsushimaru_app/docs"
-if os.path.exists(tsushimaru_docs_path):
-    app.mount("/assets", StaticFiles(directory=tsushimaru_docs_path), name="assets")
 
 # Удалена синхронизация трофеев при запуске
 
@@ -1382,21 +1384,24 @@ async def submit_feedback(
             detail="Описание обязательно"
         )
     
-    # Валидация количества фото
-    if photos and len(photos) > 10:
+    # Валидация
+    media_files = photos or []
+    
+    if len(media_files) > MAX_MEDIA_ATTACHMENTS:
         raise HTTPException(
             status_code=400,
-            detail="Можно прикрепить не более 10 изображений"
+            detail=f"Можно прикрепить не более {MAX_MEDIA_ATTACHMENTS} файлов"
         )
     
-    # Проверяем что все файлы - изображения
-    if photos:
-        for photo in photos:
-            if not validate_image_file(photo):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Разрешены только изображения"
-                )
+    normalized_media = []
+    for upload in media_files:
+        media_kind = detect_media_type(upload)
+        if media_kind not in {'photo', 'video'}:
+            raise HTTPException(
+                status_code=400,
+                detail="Разрешены только изображения и видео (MP4, MOV)."
+            )
+        normalized_media.append((upload, media_kind))
     
     # Формируем сообщение для группы
     message_text = f"""💬 <b>Новый отзыв/баг-репорт</b>
@@ -1407,31 +1412,49 @@ async def submit_feedback(
 {description.strip()}
 """
     
-    # Обрабатываем и отправляем фотографии
-    photo_paths = []
+    # Обрабатываем и отправляем медиафайлы
     try:
-        if photos and len(photos) > 0:
+        if len(normalized_media) > 0:
             with temp_image_directory(prefix='feedback_') as temp_dir:
-                # Обрабатываем и сохраняем изображения
-                for i, photo in enumerate(photos):
-                    photo_path = os.path.join(temp_dir, f'photo_{i+1}.jpg')
-                    
-                    # Открываем изображение через Pillow
-                    image = Image.open(photo.file)
-                    
-                    # Обрабатываем изображение
-                    process_image_for_upload(image, photo_path)
-                    photo_paths.append(photo_path)
-                    
-                    # Возвращаем курсор файла
-                    photo.file.seek(0)
+                media_payload = []
+                
+                for index, (upload, media_kind) in enumerate(normalized_media, start=1):
+                    if media_kind == 'photo':
+                        try:
+                            upload.file.seek(0)
+                        except Exception:
+                            pass
+
+                        photo_path = os.path.join(temp_dir, f'media_{index}.jpg')
+                        image = Image.open(upload.file)
+                        process_image_for_upload(image, photo_path)
+                        media_payload.append({
+                            "type": "photo",
+                            "path": photo_path,
+                        })
+
+                        try:
+                            upload.file.seek(0)
+                        except Exception:
+                            pass
+                    else:
+                        extension = guess_media_extension(upload, default='.mp4')
+                        if not extension.startswith('.'):
+                            extension = f'.{extension}'
+
+                        video_path = os.path.join(temp_dir, f'media_{index}{extension}')
+                        save_upload_file(upload, video_path)
+                        media_payload.append({
+                            "type": "video",
+                            "path": video_path,
+                        })
                 
                 # Отправляем уведомление в группу БЕЗ message_thread_id (в основную тему)
                 try:
-                    await send_photos_to_telegram_group(
+                    await send_media_to_telegram_group(
                         bot_token=BOT_TOKEN,
                         chat_id=TROPHY_GROUP_CHAT_ID,
-                        photo_paths=photo_paths,
+                        media_items=media_payload,
                         message_text=message_text
                     )
                 except Exception as e:
@@ -1440,7 +1463,7 @@ async def submit_feedback(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Ошибка обработки изображений: {str(e)}"
+            detail=f"Ошибка обработки медиафайлов: {str(e)}"
         )
     
     return {

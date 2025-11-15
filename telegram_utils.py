@@ -1,6 +1,7 @@
 # telegram_utils.py
 # Утилиты для работы с Telegram Bot API
 
+import io
 import json
 import os
 import aiohttp
@@ -130,74 +131,69 @@ async def send_telegram_media_group(
     bot_token: str,
     chat_id: str,
     media_items: List[Dict[str, str]],
-    message_thread_id: Optional[str] = None
+    message_thread_id: Optional[str] = None,
+    reply_to_message_id: Optional[int] = None
 ) -> dict:
     """
     Отправляет медиагруппу (фото/видео) в Telegram через Bot API.
+    Может работать с путями к файлам или готовыми BytesIO буферами.
     """
     url = f"https://api.telegram.org/bot{bot_token}/sendMediaGroup"
 
     media_payload = []
-    file_handles = []
+    file_buffers = []
+    filenames = []
 
-    try:
-        for index, item in enumerate(media_items):
-            attach_id = f'media_{index}'
-            media_payload.append({
-                "type": item.get("type", "photo"),
-                "media": f"attach://{attach_id}"
-            })
-            file_path = item.get("path")
-            if not file_path:
-                continue
-            file_handles.append(open(file_path, 'rb'))
+    for index, item in enumerate(media_items):
+        attach_id = f'media_{index}'
+        media_payload.append({
+            "type": item.get("type", "photo"),
+            "media": f"attach://{attach_id}"
+        })
+        
+        # Проверяем, передан ли уже готовый буфер или путь к файлу
+        file_buffer = item.get("buffer")
+        file_path = item.get("path")
+        
+        if file_buffer:
+            # Используем готовый BytesIO буфер
+            file_buffers.append(file_buffer)
+            filename = item.get("filename") or os.path.basename(file_path or f'media_{index}')
+            filenames.append(filename)
+        elif file_path:
+            # Читаем файл в память (BytesIO)
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+                file_buffers.append(io.BytesIO(file_data))
+                filenames.append(os.path.basename(file_path))
 
-        data = aiohttp.FormData()
-        data.add_field('chat_id', chat_id)
-        data.add_field('media', json.dumps(media_payload))
-        data.add_field('parse_mode', 'HTML')
+    # Создаем FormData ПОСЛЕ сбора всех данных
+    data = aiohttp.FormData()
+    data.add_field('chat_id', chat_id)
+    data.add_field('media', json.dumps(media_payload))
+    data.add_field('parse_mode', 'HTML')
 
-        if message_thread_id:
-            data.add_field('message_thread_id', message_thread_id)
+    if message_thread_id:
+        data.add_field('message_thread_id', message_thread_id)
 
-        for index, file_handle in enumerate(file_handles):
-            filename = os.path.basename(media_items[index].get("path", f'media_{index}'))
-            data.add_field(f'media_{index}', file_handle, filename=filename)
+    if reply_to_message_id:
+        data.add_field('reply_to_message_id', str(reply_to_message_id))
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=data) as response:
-                return await response.json()
-    finally:
-        for file_handle in file_handles:
-            file_handle.close()
+    # Добавляем все файлы в FormData
+    for index, file_buffer in enumerate(file_buffers):
+        file_buffer.seek(0)
+        data.add_field(f'media_{index}', file_buffer, filename=filenames[index])
+
+    # Отправляем один POST запрос после добавления всех данных
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, data=data) as response:
+            return await response.json()
 
 
 def _chunk_media_items(items: List[Dict[str, str]], chunk_size: int) -> List[List[Dict[str, str]]]:
     if chunk_size <= 0:
         return [items]
     return [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
-
-
-async def send_photos_to_telegram_group(
-    bot_token: str,
-    chat_id: str,
-    photo_paths: List[str],
-    message_text: str = "",
-    reply_markup: Optional[dict] = None,
-    message_thread_id: Optional[str] = None
-) -> dict:
-    """
-    Вспомогательная обёртка для обратной совместимости с кодом, который передаёт только фотографии.
-    """
-    media_items = [{"type": "photo", "path": path} for path in photo_paths]
-    return await send_media_to_telegram_group(
-        bot_token=bot_token,
-        chat_id=chat_id,
-        media_items=media_items,
-        message_text=message_text,
-        reply_markup=reply_markup,
-        message_thread_id=message_thread_id,
-    )
 
 
 async def send_media_to_telegram_group(
@@ -244,16 +240,40 @@ async def send_media_to_telegram_group(
             message_thread_id=message_thread_id,
         )
 
-    batches = _chunk_media_items(media_items, MEDIA_GROUP_LIMIT)
+    # Читаем ВСЕ файлы в память ПЕРЕД началом отправки батчей
+    # Это гарантирует, что файлы доступны даже если временная директория удалится
+    media_items_with_buffers = []
+    for item in media_items:
+        file_path = item.get("path")
+        if not file_path:
+            media_items_with_buffers.append(item)
+            continue
+        
+        # Читаем файл в память (BytesIO)
+        with open(file_path, 'rb') as f:
+            file_data = f.read()
+            buffer = io.BytesIO(file_data)
+        
+        # Создаем новый элемент с буфером вместо пути
+        item_with_buffer = item.copy()
+        item_with_buffer["buffer"] = buffer
+        item_with_buffer["filename"] = os.path.basename(file_path)
+        media_items_with_buffers.append(item_with_buffer)
+    
+    batches = _chunk_media_items(media_items_with_buffers, MEDIA_GROUP_LIMIT)
     first_message_id: Optional[int] = None
     last_response: Optional[dict] = None
 
-    for batch in batches:
+    for batch_index, batch in enumerate(batches):
+        # Первый батч отправляем без reply, последующие - как ответ на предыдущий
+        reply_to_id = first_message_id if batch_index > 0 else None
+        
         batch_result = await send_telegram_media_group(
             bot_token=bot_token,
             chat_id=chat_id,
             media_items=batch,
             message_thread_id=message_thread_id,
+            reply_to_message_id=reply_to_id,
         )
 
         if first_message_id is None and batch_result.get('ok') and batch_result.get('result'):
