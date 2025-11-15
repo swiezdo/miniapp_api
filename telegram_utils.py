@@ -54,34 +54,46 @@ async def send_telegram_message(
             return await response.json()
 
 
-async def send_telegram_photo(
+async def send_telegram_single_media(
     bot_token: str,
     chat_id: str,
-    photo_path: str,
+    media_type: str,  # 'photo' или 'video'
+    media_path: str,
     caption: str = "",
     reply_markup: Optional[dict] = None,
     message_thread_id: Optional[str] = None
 ) -> dict:
     """
-    Отправляет фотографию в Telegram через Bot API.
+    Отправляет одно медиа (фото или видео) в Telegram через Bot API.
     
     Args:
         bot_token: Токен бота
         chat_id: ID чата
-        photo_path: Путь к файлу фотографии
-        caption: Подпись к фото (опционально)
+        media_type: Тип медиа ('photo' или 'video')
+        media_path: Путь к файлу медиа
+        caption: Подпись к медиа (опционально)
         reply_markup: Inline клавиатура (опционально)
         message_thread_id: ID темы (опционально)
     
     Returns:
         Результат запроса к Telegram API
     """
-    url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+    # Определяем endpoint и имя поля в зависимости от типа медиа
+    if media_type == 'photo':
+        endpoint = 'sendPhoto'
+        field_name = 'photo'
+        filename = 'photo.jpg'
+    else:  # video
+        endpoint = 'sendVideo'
+        field_name = 'video'
+        filename = os.path.basename(media_path)
     
-    with open(photo_path, 'rb') as photo_file:
+    url = f"https://api.telegram.org/bot{bot_token}/{endpoint}"
+    
+    with open(media_path, 'rb') as media_file:
         data = aiohttp.FormData()
         data.add_field('chat_id', chat_id)
-        data.add_field('photo', photo_file, filename='photo.jpg')
+        data.add_field(field_name, media_file, filename=filename)
         data.add_field('caption', caption)
         data.add_field('parse_mode', 'HTML')
         
@@ -91,37 +103,6 @@ async def send_telegram_photo(
         if reply_markup:
             data.add_field('reply_markup', json.dumps(reply_markup))
         
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=data) as response:
-                return await response.json()
-
-
-async def send_telegram_video(
-    bot_token: str,
-    chat_id: str,
-    video_path: str,
-    caption: str = "",
-    reply_markup: Optional[dict] = None,
-    message_thread_id: Optional[str] = None
-) -> dict:
-    """
-    Отправляет видео в Telegram через Bot API.
-    """
-    url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
-
-    with open(video_path, 'rb') as video_file:
-        data = aiohttp.FormData()
-        data.add_field('chat_id', chat_id)
-        data.add_field('video', video_file, filename=os.path.basename(video_path))
-        data.add_field('caption', caption)
-        data.add_field('parse_mode', 'HTML')
-
-        if message_thread_id:
-            data.add_field('message_thread_id', message_thread_id)
-
-        if reply_markup:
-            data.add_field('reply_markup', json.dumps(reply_markup))
-
         async with aiohttp.ClientSession() as session:
             async with session.post(url, data=data) as response:
                 return await response.json()
@@ -221,20 +202,11 @@ async def send_media_to_telegram_group(
         media_type = item.get("type", "photo")
         media_path = item.get("path", "")
 
-        if media_type == 'video':
-            return await send_telegram_video(
-                bot_token=bot_token,
-                chat_id=chat_id,
-                video_path=media_path,
-                caption=message_text,
-                reply_markup=reply_markup,
-                message_thread_id=message_thread_id,
-            )
-
-        return await send_telegram_photo(
+        return await send_telegram_single_media(
             bot_token=bot_token,
             chat_id=chat_id,
-            photo_path=media_path,
+            media_type=media_type,
+            media_path=media_path,
             caption=message_text,
             reply_markup=reply_markup,
             message_thread_id=message_thread_id,
