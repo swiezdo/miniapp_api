@@ -1507,6 +1507,17 @@ async def submit_feedback(
                 except Exception as e:
                     print(f"Ошибка отправки отзыва в группу: {e}")
                     # Не прерываем выполнение, но логируем ошибку
+        else:
+            # Если нет медиафайлов, отправляем просто текстовое сообщение
+            try:
+                await send_telegram_message(
+                    bot_token=BOT_TOKEN,
+                    chat_id=TROPHY_GROUP_CHAT_ID,
+                    text=message_text
+                )
+            except Exception as e:
+                print(f"Ошибка отправки отзыва в группу: {e}")
+                # Не прерываем выполнение, но логируем ошибку
     except Exception as e:
         raise HTTPException(
             status_code=500,
