@@ -291,6 +291,24 @@ def init_db(db_path: str) -> None:
             CREATE INDEX IF NOT EXISTS idx_trophies_user_id ON trophies(user_id)
         ''')
         
+        # Создаем таблицу rotation_current_week для хранения текущей недели ротации
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS rotation_current_week (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                week INTEGER NOT NULL CHECK(week >= 1 AND week <= 16),
+                last_updated INTEGER NOT NULL
+            )
+        ''')
+        
+        # Убеждаемся что запись существует, если нет - создаем с week = 14
+        cursor.execute('SELECT id FROM rotation_current_week WHERE id = 1')
+        if cursor.fetchone() is None:
+            current_time = int(time.time())
+            cursor.execute('''
+                INSERT INTO rotation_current_week (id, week, last_updated)
+                VALUES (1, 14, ?)
+            ''', (current_time,))
+        
         conn.commit()
         conn.close()
         
@@ -1687,6 +1705,129 @@ def update_active_trophies(db_path: str, user_id: int, active_trophies_list: Lis
         
     except sqlite3.Error as e:
         print(f"Ошибка обновления активных трофеев: {e}")
+        traceback.print_exc()
+        return False
+
+
+def get_current_rotation_week(db_path: str) -> Optional[int]:
+    """
+    Получает текущую неделю ротации из БД.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        Номер недели (1-16) или None в случае ошибки
+    """
+    try:
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('SELECT week FROM rotation_current_week WHERE id = 1')
+            row = cursor.fetchone()
+            
+            if row:
+                return row[0]
+            else:
+                # Если записи нет, создаем с начальным значением 14
+                current_time = int(time.time())
+                cursor.execute('''
+                    INSERT INTO rotation_current_week (id, week, last_updated)
+                    VALUES (1, 14, ?)
+                ''', (current_time,))
+                return 14
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка получения текущей недели: {e}")
+        traceback.print_exc()
+        return None
+
+
+def get_rotation_week_info(db_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает информацию о текущей неделе ротации (номер недели и время последнего обновления).
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        Словарь с ключами 'week' и 'last_updated' или None в случае ошибки
+    """
+    try:
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('SELECT week, last_updated FROM rotation_current_week WHERE id = 1')
+            row = cursor.fetchone()
+            
+            if row:
+                return {
+                    'week': row[0],
+                    'last_updated': row[1]
+                }
+            else:
+                # Если записи нет, создаем с начальным значением 14
+                current_time = int(time.time())
+                cursor.execute('''
+                    INSERT INTO rotation_current_week (id, week, last_updated)
+                    VALUES (1, 14, ?)
+                ''', (current_time,))
+                return {
+                    'week': 14,
+                    'last_updated': current_time
+                }
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка получения информации о неделе: {e}")
+        traceback.print_exc()
+        return None
+
+
+def update_rotation_week(db_path: str) -> bool:
+    """
+    Обновляет неделю ротации (увеличивает на 1, после 16 → 1).
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        True при успешном обновлении, иначе False
+    """
+    try:
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return False
+            
+            # Получаем текущую неделю
+            cursor.execute('SELECT week FROM rotation_current_week WHERE id = 1')
+            row = cursor.fetchone()
+            
+            if not row:
+                # Если записи нет, создаем с начальным значением 14
+                current_time = int(time.time())
+                cursor.execute('''
+                    INSERT INTO rotation_current_week (id, week, last_updated)
+                    VALUES (1, 14, ?)
+                ''', (current_time,))
+                return True
+            
+            current_week = row[0]
+            # Увеличиваем неделю на 1, после 16 → 1
+            new_week = (current_week % 16) + 1
+            current_time = int(time.time())
+            
+            cursor.execute('''
+                UPDATE rotation_current_week 
+                SET week = ?, last_updated = ?
+                WHERE id = 1
+            ''', (new_week, current_time))
+            
+            return True
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка обновления недели ротации: {e}")
         traceback.print_exc()
         return False
         

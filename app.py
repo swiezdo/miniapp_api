@@ -47,6 +47,8 @@ from db import (
     add_trophy,
     update_active_trophies,
     delete_user_all_data,
+    get_current_rotation_week,
+    update_rotation_week,
 )
 from image_utils import (
     process_image_for_upload,
@@ -444,6 +446,19 @@ async def get_stats():
         "total_users": user_count,
         "api_version": "1.0.0"
     }
+
+
+@app.get("/api/rotation/current")
+async def get_current_rotation():
+    """
+    Возвращает текущую неделю ротации (1-16).
+    """
+    week = get_current_rotation_week(DB_PATH)
+    
+    if week is None:
+        raise HTTPException(status_code=500, detail="Ошибка получения текущей недели")
+    
+    return {"week": week}
 
 
 def _read_waves_json() -> dict:
