@@ -148,7 +148,7 @@ with db_connection(db_path) as cursor:
   
 - **REST API**: frontend взаимодействует только через REST API
   - Валидация через Telegram initData
-  - CORS настроен для GitHub Pages
+  - CORS настроен для клиентского домена
 
 ## Частые задачи и их решения
 
