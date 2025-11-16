@@ -12,7 +12,9 @@ def load_trophy_config() -> Dict[str, Any]:
     Путь к файлу определяется относительно директории приложения или фронтенда.
     """
     config_paths = [
+        os.path.join(os.path.dirname(__file__), '..', 'tsushimaru_app', 'docs', 'assets', 'data', 'trophies.json'),
         os.path.join(os.path.dirname(__file__), '..', 'tsushimaru_app', 'docs', 'trophies.json'),
+        '/root/tsushimaru_app/docs/assets/data/trophies.json',
         '/root/tsushimaru_app/docs/trophies.json',
         os.path.join(os.path.dirname(__file__), 'trophies.json'),
         './trophies.json'

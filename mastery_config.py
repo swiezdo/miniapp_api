@@ -12,8 +12,8 @@ def load_mastery_config() -> Dict[str, Any]:
     Путь к файлу определяется относительно директории приложения или фронтенда.
     """
     config_paths = [
-        os.path.join(os.path.dirname(__file__), '..', 'tsushimaru_app', 'docs', 'mastery-config.json'),
-        '/root/tsushimaru_app/docs/mastery-config.json',
+        os.path.join(os.path.dirname(__file__), '..', 'tsushimaru_app', 'docs', 'assets', 'data', 'mastery-config.json'),
+        '/root/tsushimaru_app/docs/assets/data/mastery-config.json',
         os.path.join(os.path.dirname(__file__), 'mastery-config.json'),
         './mastery-config.json'
     ]

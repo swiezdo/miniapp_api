@@ -658,7 +658,7 @@ def render_waves_template(waves_data: dict) -> str:
 
     slug = _safe_text(waves_data.get("slug"), "")
     if slug:
-        map_url = f"{ASSETS_PREFIX}/maps/{slug}.jpg"
+        map_url = f"{ASSETS_PREFIX}/maps/survival/{slug}.jpg"
         map_card_extra_class = "waves-meta-card--with-bg"
         map_bg_style = f"--waves-map-bg: url('{html.escape(map_url, quote=True)}');"
     else:
