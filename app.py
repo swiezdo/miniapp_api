@@ -328,36 +328,68 @@ async def get_users_list(user_id: int = Depends(get_current_user)):
     """
     users = get_all_users(DB_PATH)
     
-    # Загружаем конфиг мастерства для определения максимальных уровней
+    # Загружаем дополнительные данные и формируем расширенные флаги
     try:
-        config = load_mastery_config()
-        
-        # Создаем словарь максимальных уровней по категориям
-        max_levels_map = {}
-        for category in config.get('categories', []):
-            category_key = category.get('key')
-            max_levels = category.get('maxLevels', 0)
-            if category_key:
-                max_levels_map[category_key] = max_levels
-        
-        # Получаем активные трофеи для каждого пользователя
-        for user in users:
-            user_id = user.get('user_id')
-            if user_id:
-                trophies_data = get_trophies(DB_PATH, user_id)
-                user['active_trophies'] = trophies_data.get('active_trophies', [])
-            else:
-                user['active_trophies'] = []
+        # Опциональный локальный импорт для подсчета публичных билдов
+        from db import get_user_public_builds_count as db_get_user_public_builds_count
+    except Exception:
+        db_get_user_public_builds_count = None
+    
+    try:
+        for u in users:
+            uid = u.get('user_id')
             
-            # Удаляем поле mastery из ответа (оно больше не нужно)
-            user.pop('mastery', None)
+            # ТРОФЕИ (гарантированно заполняем сначала)
+            try:
+                trophies_data = get_trophies(DB_PATH, uid) if uid else {'trophies': [], 'active_trophies': []}
+                all_trophies = trophies_data.get('trophies', []) or []
+                active_trophies = trophies_data.get('active_trophies', []) or []
+            except Exception:
+                all_trophies = []
+                active_trophies = []
+            u['active_trophies'] = active_trophies
+            u['trophies_count'] = len(all_trophies)
+            u['active_trophies_count'] = len(active_trophies)
+            u['has_any_trophy'] = len(all_trophies) > 0
+            
+            # МАСТЕРСТВО → флаг наличия любого прогресса > 0
+            mastery = u.get('mastery') or {}
+            try:
+                levels_iter = [
+                    int(mastery.get('solo') or 0),
+                    int(mastery.get('hellmode') or 0),
+                    int(mastery.get('raid') or 0),
+                    int(mastery.get('speedrun') or 0),
+                    int(mastery.get('glitch') or 0),
+                ]
+                u['has_mastery_progress'] = any(level > 0 for level in levels_iter)
+            except Exception:
+                u['has_mastery_progress'] = False
+            # Убираем подробные уровни из ответа (опционально для экономии трафика)
+            u.pop('mastery', None)
+            
+            # БИЛДЫ → количество публичных билдов и флаг
+            builds_count = 0
+            if db_get_user_public_builds_count and uid:
+                try:
+                    builds_count = int(db_get_user_public_builds_count(DB_PATH, uid)) or 0
+                except Exception:
+                    builds_count = 0
+            u['builds_count'] = builds_count
+            u['has_public_builds'] = builds_count > 0
     
     except Exception as e:
-        print(f"Ошибка обработки трофеев: {e}")
-        # В случае ошибки просто добавляем пустой массив для всех пользователей
-        for user in users:
-            user.pop('mastery', None)
-            user['active_trophies'] = []
+        print(f"Ошибка формирования расширенных полей users.list: {e}")
+        # Деградация: гарантируем наличие обязательных полей
+        for u in users:
+            u['active_trophies'] = u.get('active_trophies', [])
+            u['trophies_count'] = u.get('trophies_count', 0)
+            u['active_trophies_count'] = u.get('active_trophies_count', 0)
+            u['has_any_trophy'] = u.get('has_any_trophy', False)
+            u['has_mastery_progress'] = u.get('has_mastery_progress', False)
+            u['builds_count'] = u.get('builds_count', 0)
+            u['has_public_builds'] = u.get('has_public_builds', False)
+            u.pop('mastery', None)
     
     return {"users": users}
 

@@ -1090,6 +1090,35 @@ def get_all_users(db_path: str) -> List[Dict[str, Any]]:
         return []
 
 
+def get_user_public_builds_count(db_path: str, user_id: int) -> int:
+    """
+    Возвращает количество публичных билдов пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Количество публичных билдов (int)
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return 0
+            
+            cursor.execute('''
+                SELECT COUNT(*) 
+                FROM builds 
+                WHERE user_id = ? AND is_public = 1
+            ''', (user_id,))
+            
+            row = cursor.fetchone()
+            return int(row[0] or 0)
+    except sqlite3.Error as e:
+        print(f"Ошибка подсчета публичных билдов пользователя: {e}")
+        traceback.print_exc()
+        return 0
+
 def get_mastery(db_path: str, user_id: int) -> Dict[str, int]:
     """
     Получает уровни мастерства пользователя.
