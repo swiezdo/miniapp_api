@@ -51,6 +51,7 @@ from db import (
     update_rotation_week,
     log_recent_event,
     get_recent_events,
+    get_recent_comments,
 )
 from image_utils import (
     process_image_for_upload,
@@ -2041,6 +2042,33 @@ async def get_recent_events_feed(
 
     events = [build_event_view(evt) for evt in raw_events]
     return {"events": events}
+
+
+@app.get("/api/comments.recent")
+async def get_recent_comments_feed(
+    limit: int = Query(3, ge=1, le=10),
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Возвращает последние комментарии к билдам.
+    """
+    raw_comments = get_recent_comments(DB_PATH, limit)
+
+    def build_comment_view(comment: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "comment_id": comment.get("comment_id"),
+            "build_id": comment.get("build_id"),
+            "build_name": comment.get("build_name"),
+            "build_class": comment.get("build_class"),
+            "user_id": comment.get("user_id"),
+            "psn_id": comment.get("psn_id"),
+            "avatar_url": comment.get("avatar_url"),
+            "comment_text": comment.get("comment_text"),
+            "created_at": comment.get("created_at"),
+        }
+
+    comments = [build_comment_view(c) for c in raw_comments]
+    return {"comments": comments}
 
 
 @app.post("/api/trophy.reject")

@@ -1365,6 +1365,50 @@ def get_build_comments(db_path: str, build_id: int) -> List[Dict[str, Any]]:
         return []
 
 
+def get_recent_comments(db_path: str, limit: int = 3) -> List[Dict[str, Any]]:
+    """
+    Возвращает последние комментарии с информацией об авторах и билдах.
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+
+            cursor.execute(
+                '''
+                SELECT c.comment_id, c.build_id, c.user_id, c.comment_text, c.created_at,
+                       u.psn_id, u.avatar_url,
+                       b.name as build_name, b.class as build_class
+                FROM comments c
+                LEFT JOIN users u ON c.user_id = u.user_id
+                LEFT JOIN builds b ON c.build_id = b.build_id
+                ORDER BY c.created_at DESC
+                LIMIT ?
+                ''',
+                (limit,),
+            )
+
+            rows = cursor.fetchall() or []
+            comments = []
+            for row in rows:
+                comments.append({
+                    'comment_id': row[0],
+                    'build_id': row[1],
+                    'user_id': row[2],
+                    'comment_text': row[3],
+                    'created_at': row[4],
+                    'psn_id': row[5] or 'Скрытый автор',
+                    'avatar_url': row[6],
+                    'build_name': row[7] or 'Без названия',
+                    'build_class': row[8] or '',
+                })
+            return comments
+    except sqlite3.Error as e:
+        print(f"Ошибка получения последних комментариев: {e}")
+        traceback.print_exc()
+        return []
+
+
 def toggle_reaction(db_path: str, build_id: int, user_id: int, reaction_type: str) -> Dict[str, Any]:
     """
     Переключает реакцию пользователя на билд.
