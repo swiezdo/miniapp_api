@@ -308,6 +308,25 @@ def init_db(db_path: str) -> None:
                 INSERT INTO rotation_current_week (id, week, last_updated)
                 VALUES (1, 14, ?)
             ''', (current_time,))
+
+        # Создаем таблицу recent_events для ленты наград
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS recent_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                user_id INTEGER,
+                psn_id TEXT,
+                avatar_url TEXT,
+                payload TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(user_id)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_recent_events_created_at
+            ON recent_events(created_at DESC)
+        ''')
         
         conn.commit()
         conn.close()
@@ -1736,6 +1755,92 @@ def update_active_trophies(db_path: str, user_id: int, active_trophies_list: Lis
         print(f"Ошибка обновления активных трофеев: {e}")
         traceback.print_exc()
         return False
+
+
+# ========== ФУНКЦИИ ДЛЯ ЛЕНТЫ СОБЫТИЙ ==========
+
+def log_recent_event(
+    db_path: str,
+    event_type: str,
+    user_id: Optional[int],
+    psn_id: Optional[str],
+    avatar_url: Optional[str],
+    payload: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Логирует событие (повышение мастерства, трофей и т.д.) для ленты наград.
+    """
+    try:
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return False
+
+            created_at = int(time.time())
+            payload_json = json.dumps(payload or {}, ensure_ascii=False)
+
+            cursor.execute(
+                '''
+                INSERT INTO recent_events (event_type, user_id, psn_id, avatar_url, payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    event_type,
+                    user_id,
+                    (psn_id or '').strip(),
+                    (avatar_url or '').strip(),
+                    payload_json,
+                    created_at,
+                ),
+            )
+            return True
+    except sqlite3.Error as e:
+        print(f"Ошибка логирования события: {e}")
+        traceback.print_exc()
+        return False
+
+
+def get_recent_events(db_path: str, limit: int = 3) -> List[Dict[str, Any]]:
+    """
+    Возвращает последние события для ленты наград.
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+
+            cursor.execute(
+                '''
+                SELECT event_id, event_type, user_id, psn_id, avatar_url, payload, created_at
+                FROM recent_events
+                ORDER BY created_at DESC, event_id DESC
+                LIMIT ?
+                ''',
+                (limit,),
+            )
+
+            rows = cursor.fetchall() or []
+            events = []
+            for row in rows:
+                payload_data = {}
+                try:
+                    payload_data = json.loads(row[5]) if row[5] else {}
+                except json.JSONDecodeError:
+                    payload_data = {}
+
+                events.append({
+                    'event_id': row[0],
+                    'event_type': row[1],
+                    'user_id': row[2],
+                    'psn_id': row[3],
+                    'avatar_url': row[4],
+                    'payload': payload_data,
+                    'created_at': row[6],
+                })
+            return events
+    except sqlite3.Error as e:
+        print(f"Ошибка чтения событий: {e}")
+        traceback.print_exc()
+        return []
 
 
 def get_current_rotation_week(db_path: str) -> Optional[int]:

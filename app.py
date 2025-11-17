@@ -49,6 +49,8 @@ from db import (
     delete_user_all_data,
     get_current_rotation_week,
     update_rotation_week,
+    log_recent_event,
+    get_recent_events,
 )
 from image_utils import (
     process_image_for_upload,
@@ -86,9 +88,9 @@ ALLOWED_ORIGINS = [
 DB_PATH = os.getenv("DB_PATH", "/root/miniapp_api/app.db")
 
 # Параметры для отправки уведомлений/сообщений
-TROPHY_GROUP_CHAT_ID = os.getenv("TROPHY_GROUP_CHAT_ID", "-1002348168326")
-TROPHY_GROUP_TOPIC_ID = os.getenv("TROPHY_GROUP_TOPIC_ID", "5675")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "swiezdo_testbot")
+TROPHY_GROUP_CHAT_ID = os.getenv("TROPHY_GROUP_CHAT_ID", "")
+TROPHY_GROUP_TOPIC_ID = os.getenv("TROPHY_GROUP_TOPIC_ID", "")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "")
 # ID основной группы (используется для проверки участников)
 GROUP_ID = os.getenv("GROUP_ID", "-1002365374672")
 
@@ -1842,12 +1844,6 @@ async def approve_mastery_application(
     if not success:
         raise HTTPException(status_code=500, detail="Ошибка обновления уровня в БД")
     
-    # Проверяем, достиг ли пользователь максимального уровня, и если да - начисляем трофей
-    max_levels = category.get('maxLevels', 0)
-    if new_level >= max_levels and max_levels > 0:
-        # Пользователь достиг максимального уровня - начисляем трофей
-        add_trophy(DB_PATH, user_id, category_key)
-    
     # Получаем информацию о пользователе
     user_profile = get_user(DB_PATH, user_id)
     if not user_profile:
@@ -1855,7 +1851,8 @@ async def approve_mastery_application(
     
     psn_id = user_profile.get('psn_id', '')
     username = user_profile.get('real_name', '')
-    
+    avatar_url = user_profile.get('avatar_url', '')
+
     # Находим уровень в конфиге
     level_data = None
     for level in category.get('levels', []):
@@ -1886,6 +1883,25 @@ async def approve_mastery_application(
     # Отправляем сообщение в группу поздравлений (если указан в .env)
     # Но CONGRATULATIONS_CHAT_ID теперь не в API, нужно передать его боту или вернуть в ответе
     # Пока пропускаем, бот сам отправит
+    
+    # Логируем событие повышения уровня мастерства
+    try:
+        log_recent_event(
+            DB_PATH,
+            event_type='mastery_upgrade',
+            user_id=user_id,
+            psn_id=psn_id,
+            avatar_url=avatar_url,
+            payload={
+                'category_key': category_key,
+                'category_name': category_name,
+                'level': new_level,
+                'level_name': level_name,
+                'moderator': moderator_username,
+            }
+        )
+    except Exception as log_error:
+        print(f"Не удалось логировать событие мастерства: {log_error}")
     
     return {
         "status": "ok",
@@ -1947,6 +1963,7 @@ async def approve_trophy_application(
     
     psn_id = user_profile.get('psn_id', '')
     username = user_profile.get('real_name', '')
+    avatar_url = user_profile.get('avatar_url', '')
     
     # Отправляем уведомление пользователю в личку
     try:
@@ -1972,6 +1989,58 @@ async def approve_trophy_application(
         "username": username,
         "user_id": user_id
     }
+
+
+@app.get("/api/events.recent")
+async def get_recent_events_feed(
+    limit: int = Query(3, ge=1, le=10),
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Возвращает последние события наград/мастерства для отображения на главной странице.
+    """
+    raw_events = get_recent_events(DB_PATH, limit)
+
+    def build_event_view(event: Dict[str, Any]) -> Dict[str, Any]:
+        event_type = event.get('event_type')
+        payload = event.get('payload') or {}
+        psn_id = event.get('psn_id') or 'Игрок'
+
+        headline = ''
+        details = ''
+        icon_key = ''
+
+        if event_type == 'mastery_upgrade':
+            category_name = payload.get('category_name') or payload.get('category_key') or 'Мастерство'
+            level_name = payload.get('level_name') or f"Уровень {payload.get('level')}" if payload.get('level') else ''
+            headline = f"{psn_id} повысил уровень в категории «{category_name}»"
+            details = level_name or 'Новый уровень подтверждён модераторами'
+            icon_key = payload.get('category_key') or 'mastery'
+        elif event_type == 'trophy_award':
+            trophy_name = payload.get('trophy_name') or payload.get('trophy_key') or 'Трофей'
+            headline = f"{psn_id} получил трофей «{trophy_name}»"
+            details = 'Добавлен в коллекцию'
+            icon_key = payload.get('trophy_key') or 'trophy'
+        else:
+            headline = f"{psn_id} получил новую награду"
+            details = ''
+            icon_key = 'reward'
+
+        return {
+            "event_id": event.get('event_id'),
+            "event_type": event_type,
+            "user_id": event.get('user_id'),
+            "psn_id": event.get('psn_id'),
+            "avatar_url": event.get('avatar_url'),
+            "created_at": event.get('created_at'),
+            "icon_key": icon_key,
+            "headline": headline,
+            "details": details,
+            "payload": payload,
+        }
+
+    events = [build_event_view(evt) for evt in raw_events]
+    return {"events": events}
 
 
 @app.post("/api/trophy.reject")
