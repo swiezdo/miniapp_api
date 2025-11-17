@@ -2014,16 +2014,16 @@ async def get_recent_events_feed(
         if event_type == 'mastery_upgrade':
             category_name = payload.get('category_name') or payload.get('category_key') or 'Мастерство'
             level_name = payload.get('level_name') or f"Уровень {payload.get('level')}" if payload.get('level') else ''
-            headline = f"{psn_id} повысил уровень в категории «{category_name}»"
+            headline = f"{psn_id} повысил(а) уровень в категории «{category_name}»"
             details = level_name or 'Новый уровень подтверждён модераторами'
             icon_key = payload.get('category_key') or 'mastery'
         elif event_type == 'trophy_award':
             trophy_name = payload.get('trophy_name') or payload.get('trophy_key') or 'Трофей'
-            headline = f"{psn_id} получил трофей «{trophy_name}»"
+            headline = f"{psn_id} получил(а) трофей «{trophy_name}»"
             details = 'Добавлен в коллекцию'
             icon_key = payload.get('trophy_key') or 'trophy'
         else:
-            headline = f"{psn_id} получил новую награду"
+            headline = f"{psn_id} получил(а) новую награду"
             details = ''
             icon_key = 'reward'
 
