@@ -1845,6 +1845,12 @@ async def approve_mastery_application(
     if not success:
         raise HTTPException(status_code=500, detail="Ошибка обновления уровня в БД")
     
+    # Проверяем, достиг ли пользователь максимального уровня, и если да - начисляем трофей
+    max_levels = category.get('maxLevels', 0)
+    if new_level >= max_levels and max_levels > 0:
+        # Пользователь достиг максимального уровня - начисляем трофей
+        add_trophy(DB_PATH, user_id, category_key)
+    
     # Получаем информацию о пользователе
     user_profile = get_user(DB_PATH, user_id)
     if not user_profile:
