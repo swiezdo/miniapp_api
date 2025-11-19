@@ -94,6 +94,8 @@ TROPHY_GROUP_TOPIC_ID = os.getenv("TROPHY_GROUP_TOPIC_ID", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "")
 # ID основной группы (используется для проверки участников)
 GROUP_ID = os.getenv("GROUP_ID", "-1002365374672")
+# Ссылка на группу для приглашения
+GROUP_INVITE_LINK = os.getenv("GROUP_INVITE_LINK", "https://t.me/+ZFiVYVrz-PEzYjBi")
 
 # Путь к данным волн
 WAVES_FILE_PATH = "/root/gyozenbot/json/waves.json"
@@ -465,6 +467,66 @@ async def check_group_membership(user_id: int = Depends(get_current_user)):
         raise HTTPException(
             status_code=500,
             detail=f"Ошибка при проверке участника в группе: {str(e)}"
+        )
+
+
+@app.post("/api/user.notifyNotRegistered")
+async def notify_user_not_in_group(user_id: int = Depends(get_current_user)):
+    """
+    Отправляет сообщение пользователю о необходимости вступления в группу.
+    Вызывается когда пользователь открывает приложение, но не является участником группы.
+    
+    Args:
+        user_id: ID пользователя (из dependency)
+    
+    Returns:
+        JSON с результатом отправки сообщения
+    """
+    try:
+        # Формируем текст сообщения
+        message_text = (
+            "👋 <b>Добро пожаловать!</b>\n\n"
+            "Для использования приложения необходимо быть участником группы <b>Tsushima.Ru</b>.\n\n"
+            "Пожалуйста, присоединитесь к группе, чтобы продолжить."
+        )
+        
+        # Создаем inline кнопку со ссылкой на группу
+        reply_markup = {
+            "inline_keyboard": [[
+                {
+                    "text": "Присоединиться к группе",
+                    "url": GROUP_INVITE_LINK
+                }
+            ]]
+        }
+        
+        # Отправляем сообщение пользователю в личку
+        result = await send_telegram_message(
+            bot_token=BOT_TOKEN,
+            chat_id=str(user_id),
+            text=message_text,
+            reply_markup=reply_markup
+        )
+        
+        if result.get('ok'):
+            return {
+                "success": True,
+                "message": "Сообщение отправлено пользователю"
+            }
+        else:
+            error_description = result.get('description', 'Неизвестная ошибка')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Ошибка отправки сообщения: {error_description}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка отправки уведомления пользователю: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при отправке уведомления: {str(e)}"
         )
 
 
