@@ -141,200 +141,14 @@ def _get_reaction_stats(cursor: sqlite3.Cursor, build_id: int) -> tuple:
 
 def init_db(db_path: str) -> None:
     """
-    Инициализирует базу данных и создает необходимые таблицы.
-    Использует CREATE TABLE IF NOT EXISTS, поэтому безопасна для существующих БД.
+    Инициализирует базу данных - создает директорию если её нет.
+    База данных уже настроена, таблицы создавать не нужно.
     
     Args:
         db_path: Путь к файлу базы данных SQLite
     """
     # Создаем директорию если её нет
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Создаем таблицу users
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                real_name TEXT,
-                psn_id TEXT,
-                platforms TEXT,
-                modes TEXT,
-                goals TEXT,
-                difficulties TEXT,
-                avatar_url TEXT
-            )
-        ''')
-        
-        # Добавляем avatar_url если его нет (для старых БД)
-        try:
-            cursor.execute("PRAGMA table_info(users)")
-            columns_info = cursor.fetchall()
-            column_names = [c[1] for c in columns_info]
-            if 'avatar_url' not in column_names:
-                cursor.execute('ALTER TABLE users ADD COLUMN avatar_url TEXT')
-        except sqlite3.Error:
-            pass
-        
-        # Создаем индексы для users
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)
-        ''')
-        
-        # Создаем таблицу builds
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS builds (
-                build_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                author TEXT NOT NULL,
-                name TEXT NOT NULL,
-                class TEXT NOT NULL,
-                tags TEXT NOT NULL,
-                description TEXT,
-                photo_1 TEXT NOT NULL,
-                photo_2 TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                is_public INTEGER NOT NULL DEFAULT 0
-            )
-        ''')
-        
-        # Создаем индексы для builds
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_builds_user_id ON builds(user_id)
-        ''')
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_builds_is_public ON builds(is_public)
-        ''')
-        
-        # Создаем таблицу mastery
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS mastery (
-                user_id INTEGER PRIMARY KEY,
-                solo INTEGER NOT NULL DEFAULT 0,
-                hellmode INTEGER NOT NULL DEFAULT 0,
-                raid INTEGER NOT NULL DEFAULT 0,
-                speedrun INTEGER NOT NULL DEFAULT 0,
-                glitch INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY(user_id) REFERENCES users(user_id)
-            )
-        ''')
-        
-        # Создаем индекс для mastery
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_mastery_user_id ON mastery(user_id)
-        ''')
-
-        # Убеждаемся, что в таблице mastery есть колонка glitch (для старых БД)
-        try:
-            cursor.execute("PRAGMA table_info(mastery)")
-            mastery_columns = [column_info[1] for column_info in cursor.fetchall()]
-            if 'glitch' not in mastery_columns:
-                cursor.execute('ALTER TABLE mastery ADD COLUMN glitch INTEGER NOT NULL DEFAULT 0')
-        except sqlite3.Error:
-            pass
-        
-        # Создаем таблицу comments
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS comments (
-                comment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                build_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                comment_text TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            )
-        ''')
-        
-        # Создаем индексы для comments
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_comments_build_id ON comments(build_id)
-        ''')
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_comments_user_id ON comments(user_id)
-        ''')
-        
-        # Создаем таблицу build_reactions для лайков/дизлайков
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS build_reactions (
-                reaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                build_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                reaction_type TEXT NOT NULL CHECK(reaction_type IN ('like', 'dislike')),
-                created_at INTEGER NOT NULL,
-                FOREIGN KEY(build_id) REFERENCES builds(build_id),
-                UNIQUE(build_id, user_id)
-            )
-        ''')
-        
-        # Создаем индексы для build_reactions
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_reactions_build_id ON build_reactions(build_id)
-        ''')
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_reactions_user_id ON build_reactions(user_id)
-        ''')
-        
-        # Создаем таблицу trophies
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS trophies (
-                user_id INTEGER PRIMARY KEY,
-                psn_id TEXT,
-                trophies TEXT,
-                active_trophies TEXT,
-                FOREIGN KEY(user_id) REFERENCES users(user_id)
-            )
-        ''')
-        
-        # Создаем индекс для trophies
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_trophies_user_id ON trophies(user_id)
-        ''')
-        
-        # Создаем таблицу rotation_current_week для хранения текущей недели ротации
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS rotation_current_week (
-                id INTEGER PRIMARY KEY CHECK(id = 1),
-                week INTEGER NOT NULL CHECK(week >= 1 AND week <= 16),
-                last_updated INTEGER NOT NULL
-            )
-        ''')
-        
-        # Убеждаемся что запись существует, если нет - создаем с week = 14
-        cursor.execute('SELECT id FROM rotation_current_week WHERE id = 1')
-        if cursor.fetchone() is None:
-            current_time = int(time.time())
-            cursor.execute('''
-                INSERT INTO rotation_current_week (id, week, last_updated)
-                VALUES (1, 14, ?)
-            ''', (current_time,))
-
-        # Создаем таблицу recent_events для ленты наград
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS recent_events (
-                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_type TEXT NOT NULL,
-                user_id INTEGER,
-                psn_id TEXT,
-                avatar_url TEXT,
-                payload TEXT,
-                created_at INTEGER NOT NULL,
-                FOREIGN KEY(user_id) REFERENCES users(user_id)
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_recent_events_created_at
-            ON recent_events(created_at DESC)
-        ''')
-        
-        conn.commit()
-        conn.close()
-        
-    except sqlite3.Error as e:
-        print(f"Ошибка инициализации БД: {e}")
-        traceback.print_exc()
-        raise
 
 
 def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
@@ -457,10 +271,17 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 
                 # Убеждаемся что запись в mastery существует (создаём если её нет)
                 if not mastery_exists:
+                    psn_id = profile_data.get('psn_id', '') or ''
                     cursor.execute('''
-                        INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun, glitch)
-                        VALUES (?, 0, 0, 0, 0, 0)
-                    ''', (user_id,))
+                        INSERT INTO mastery (user_id, psn_id, solo, hellmode, raid, speedrun, glitch)
+                        VALUES (?, ?, 0, 0, 0, 0, 0)
+                    ''', (user_id, psn_id))
+                else:
+                    # Обновляем psn_id в mastery если запись существует
+                    psn_id = profile_data.get('psn_id', '') or ''
+                    cursor.execute('''
+                        UPDATE mastery SET psn_id = ? WHERE user_id = ?
+                    ''', (psn_id, user_id))
                 
                 # Обновляем psn_id в trophies если запись существует
                 if trophies_exists:
@@ -487,10 +308,11 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 
                 # Автоматически создаём запись в mastery для нового пользователя (только если её нет)
                 if not mastery_exists:
+                    psn_id = profile_data.get('psn_id', '') or ''
                     cursor.execute('''
-                        INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun, glitch)
-                        VALUES (?, 0, 0, 0, 0, 0)
-                    ''', (user_id,))
+                        INSERT INTO mastery (user_id, psn_id, solo, hellmode, raid, speedrun, glitch)
+                        VALUES (?, ?, 0, 0, 0, 0, 0)
+                    ''', (user_id, psn_id))
                 
                 # Автоматически создаём запись в trophies для нового пользователя (только если её нет)
                 if not trophies_exists:
@@ -1250,13 +1072,19 @@ def set_mastery(db_path: str, user_id: int, category: str, level: int) -> bool:
                 ))
             else:
                 # Создаём новую запись с нужным уровнем
+                # Получаем psn_id из таблицы users
+                cursor.execute('SELECT psn_id FROM users WHERE user_id = ?', (user_id,))
+                user_row = cursor.fetchone()
+                psn_id = user_row[0] if user_row and user_row[0] else None
+                
                 # Используем INSERT с явным указанием всех полей
                 mastery_values = {cat: level if cat == category else 0 for cat in MASTERY_CATEGORIES}
                 cursor.execute('''
-                    INSERT INTO mastery (user_id, solo, hellmode, raid, speedrun, glitch)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO mastery (user_id, psn_id, solo, hellmode, raid, speedrun, glitch)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     user_id,
+                    psn_id,
                     mastery_values['solo'],
                     mastery_values['hellmode'],
                     mastery_values['raid'],
