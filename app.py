@@ -67,6 +67,7 @@ from user_utils import get_user_with_psn, format_profile_response
 from mastery_utils import find_category_by_key, parse_tags
 from mastery_config import load_mastery_config
 from trophy_config import load_trophy_config, find_trophy_by_key
+from season_trophy_config import find_season_trophy_by_key, load_season_trophy_config
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -1998,14 +1999,18 @@ async def approve_trophy_application(
     if not verify_bot_authorization(authorization):
         raise HTTPException(status_code=401, detail="Неавторизованный запрос")
     
-    # Загружаем конфиг трофеев
+    # Пытаемся найти трофей в обычном конфиге
+    trophy = None
     try:
         config = load_trophy_config()
+        trophy = find_trophy_by_key(config, trophy_key)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
+        print(f"Ошибка загрузки конфига трофеев: {e}")
     
-    # Находим трофей в конфиге
-    trophy = find_trophy_by_key(config, trophy_key)
+    # Если не найден в обычном конфиге, ищем в сезонных трофеях
+    if not trophy:
+        trophy = find_season_trophy_by_key(trophy_key)
+    
     if not trophy:
         raise HTTPException(status_code=400, detail=f"Трофей {trophy_key} не найден в конфиге")
     
@@ -2034,9 +2039,13 @@ async def approve_trophy_application(
     username = user_profile.get('real_name', '')
     avatar_url = user_profile.get('avatar_url', '')
     
+    # Определяем тип трофея для уведомления
+    is_season = find_season_trophy_by_key(trophy_key) is not None
+    trophy_type_text = "сезонного трофея" if is_season else "трофея"
+    
     # Отправляем уведомление пользователю в личку
     try:
-        user_notification = f"""✅ <b>Ваша заявка на получение трофея была одобрена!</b>
+        user_notification = f"""✅ <b>Ваша заявка на получение {trophy_type_text} была одобрена!</b>
 
 🏅 <b>Трофей:</b> {trophy_name}
 
@@ -2160,14 +2169,19 @@ async def reject_trophy_application(
     if not user_profile:
         raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
     
-    # Загружаем конфиг для получения названия
+    # Пытаемся найти трофей в обычном конфиге
+    trophy = None
     try:
         config = load_trophy_config()
+        trophy = find_trophy_by_key(config, trophy_key)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
+        print(f"Ошибка загрузки конфига трофеев: {e}")
     
-    # Находим трофей в конфиге
-    trophy = find_trophy_by_key(config, trophy_key)
+    # Если не найден в обычном конфиге, ищем в сезонных трофеях
+    if not trophy:
+        trophy = find_season_trophy_by_key(trophy_key)
+    
+    # Получаем название трофея или используем ключ, если не найден
     trophy_name = trophy.get('name', trophy_key) if trophy else trophy_key
     
     # Отправляем уведомление пользователю в личку
@@ -2295,7 +2309,7 @@ async def get_trophies_endpoint(
 @app.get("/api/trophies.list")
 async def get_trophies_list(user_id: int = Depends(get_current_user)):
     """
-    Получает список всех доступных трофеев из конфига.
+    Получает список всех доступных трофеев из конфига (обычные + сезонные).
     
     Args:
         user_id: ID пользователя (из dependency, для проверки авторизации)
@@ -2304,17 +2318,45 @@ async def get_trophies_list(user_id: int = Depends(get_current_user)):
         JSON со списком всех трофеев из конфига
     """
     try:
+        # Загружаем обычные трофеи
         config = load_trophy_config()
         trophies_list = config.get('trophies', [])
+        
+        # Добавляем поле is_season для обычных трофеев
+        for trophy in trophies_list:
+            trophy['is_season'] = False
         
         # Получаем трофеи пользователя для отметки полученных
         user_trophies_data = get_trophies(DB_PATH, user_id)
         user_trophies = set(user_trophies_data.get('trophies', []))
         
-        # Отмечаем какие трофеи получены
+        # Загружаем сезонные трофеи
+        try:
+            season_trophies = load_season_trophy_config()
+            # Фильтруем сезонные трофеи: показываем только active или полученные пользователем
+            filtered_season_trophies = []
+            for trophy in season_trophies:
+                trophy_key = trophy.get('key')
+                trophy_status = trophy.get('status', 'inactive')
+                is_obtained = trophy_key in user_trophies if trophy_key else False
+                
+                # Показываем трофей, если он active или если пользователь его получил
+                if trophy_status == 'active' or is_obtained:
+                    trophy['is_season'] = True
+                    trophy['obtained'] = is_obtained
+                    filtered_season_trophies.append(trophy)
+            
+            # Объединяем списки
+            trophies_list.extend(filtered_season_trophies)
+        except Exception as e:
+            print(f"Ошибка загрузки сезонных трофеев: {e}")
+            # Продолжаем без сезонных трофеев
+        
+        # Отмечаем какие трофеи получены (для обычных трофеев)
         for trophy in trophies_list:
-            trophy_key = trophy.get('key')
-            trophy['obtained'] = trophy_key in user_trophies if trophy_key else False
+            if not trophy.get('is_season'):  # Пропускаем сезонные, они уже обработаны
+                trophy_key = trophy.get('key')
+                trophy['obtained'] = trophy_key in user_trophies if trophy_key else False
         
         return {
             "status": "ok",
@@ -2340,17 +2382,17 @@ async def submit_trophy_application(
     # Получаем профиль пользователя для получения psn_id
     user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
     
-    # Загружаем конфиг трофеев
+    # Пытаемся найти трофей в обычном конфиге
+    trophy = None
     try:
         config = load_trophy_config()
+        trophy = find_trophy_by_key(config, trophy_key)
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ошибка загрузки конфига трофеев: {str(e)}"
-        )
+        print(f"Ошибка загрузки конфига трофеев: {e}")
     
-    # Находим трофей в конфиге
-    trophy = find_trophy_by_key(config, trophy_key)
+    # Если не найден в обычном конфиге, ищем в сезонных трофеях
+    if not trophy:
+        trophy = find_season_trophy_by_key(trophy_key)
     
     if not trophy:
         raise HTTPException(
@@ -2396,20 +2438,36 @@ async def submit_trophy_application(
     trophy_name = trophy.get('name', trophy_key)
     trophy_description = trophy.get('description', '')
     trophy_proof = trophy.get('proof', '')
+    # Для сезонных трофеев может быть card_msg вместо description
+    if not trophy_description and trophy.get('card_msg'):
+        trophy_description = trophy.get('card_msg', '')
     
     comment_text = comment.strip() if comment and comment.strip() else "Без комментария"
     
-    message_text = f"""🏆 <b>Заявка на получение трофея</b>
+    # Определяем тип трофея для заголовка
+    is_season = find_season_trophy_by_key(trophy_key) is not None
+    trophy_type = "сезонного трофея" if is_season else "трофея"
+    
+    # Для сезонных трофеев не включаем description и proof (слишком длинные), только основная информация
+    if is_season:
+        message_text = f"""🏆 <b>Заявка на получение {trophy_type}</b>
+
+👤 <b>PSN ID:</b> {psn_id}
+🏅 <b>Трофей:</b> {trophy_name}
+💬 <b>Комментарий:</b> {comment_text}"""
+    else:
+        # Для обычных трофеев включаем полное описание
+        message_text = f"""🏆 <b>Заявка на получение {trophy_type}</b>
 
 👤 <b>PSN ID:</b> {psn_id}
 🏅 <b>Трофей:</b> {trophy_name}
 📝 <b>Описание:</b>
-{trophy_description}
+{trophy_description}"""
 
-📸 <b>Требуемые доказательства:</b>
-{trophy_proof}
-
-💬 <b>Комментарий:</b> {comment_text}"""
+        if trophy_proof:
+            message_text += f"\n\n📸 <b>Требуемые доказательства:</b>\n{trophy_proof}"
+        
+        message_text += f"\n\n💬 <b>Комментарий:</b> {comment_text}"""
     
     # Создаем inline кнопки
     reply_markup = {
@@ -2426,6 +2484,20 @@ async def submit_trophy_application(
             ]
         ]
     }
+    
+    # Валидация переменных окружения перед отправкой
+    if not BOT_TOKEN:
+        raise HTTPException(
+            status_code=500,
+            detail="BOT_TOKEN не настроен. Обратитесь к администратору."
+        )
+    if not TROPHY_GROUP_CHAT_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="TROPHY_GROUP_CHAT_ID не настроен. Обратитесь к администратору."
+        )
+    if not TROPHY_GROUP_TOPIC_ID:
+        print(f"WARNING: TROPHY_GROUP_TOPIC_ID не установлен. Заявка будет отправлена без указания темы.")
     
     # Обрабатываем и отправляем фотографии
     try:
@@ -2465,6 +2537,11 @@ async def submit_trophy_application(
             
             # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
             try:
+                # Логируем параметры отправки (без чувствительных данных)
+                print(f"Отправка заявки на трофей в группу: user_id={user_id}, trophy_key={trophy_key}, "
+                      f"chat_id={TROPHY_GROUP_CHAT_ID}, topic_id={TROPHY_GROUP_TOPIC_ID}, "
+                      f"media_count={len(media_payload)}")
+                
                 await send_media_to_telegram_group(
                     bot_token=BOT_TOKEN,
                     chat_id=TROPHY_GROUP_CHAT_ID,
@@ -2473,9 +2550,20 @@ async def submit_trophy_application(
                     reply_markup=reply_markup,
                     message_thread_id=TROPHY_GROUP_TOPIC_ID
                 )
+                print(f"Заявка на трофей успешно отправлена в группу: user_id={user_id}, trophy_key={trophy_key}")
             except Exception as e:
-                print(f"Ошибка отправки заявки в группу: {e}")
-                # Не прерываем выполнение, но логируем ошибку
+                # Улучшенное логирование ошибки с traceback
+                print(f"ERROR: Ошибка отправки заявки на трофей в группу: {e}")
+                print(f"  User ID: {user_id}, Trophy Key: {trophy_key}")
+                print(f"  Chat ID: {TROPHY_GROUP_CHAT_ID}, Topic ID: {TROPHY_GROUP_TOPIC_ID}")
+                traceback.print_exc()
+                
+                # Пробрасываем ошибку пользователю, чтобы он видел проблему
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Ошибка отправки заявки в группу модераторов: {str(e)}. "
+                           f"Попробуйте позже или обратитесь к администратору."
+                )
     except Exception as e:
         raise HTTPException(
             status_code=500,

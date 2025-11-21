@@ -51,7 +51,19 @@ async def send_telegram_message(
     
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=data) as response:
-            return await response.json()
+            result = await response.json()
+            
+            # Проверяем статус ответа от Telegram API
+            if not result.get('ok'):
+                error_code = result.get('error_code', 'unknown')
+                description = result.get('description', 'Unknown error')
+                raise Exception(
+                    f"Telegram API error (sendMessage): "
+                    f"error_code={error_code}, description={description}, "
+                    f"chat_id={chat_id}, message_thread_id={message_thread_id}"
+                )
+            
+            return result
 
 
 async def send_telegram_single_media(
@@ -105,7 +117,19 @@ async def send_telegram_single_media(
         
         async with aiohttp.ClientSession() as session:
             async with session.post(url, data=data) as response:
-                return await response.json()
+                result = await response.json()
+                
+                # Проверяем статус ответа от Telegram API
+                if not result.get('ok'):
+                    error_code = result.get('error_code', 'unknown')
+                    description = result.get('description', 'Unknown error')
+                    raise Exception(
+                        f"Telegram API error (send{media_type.capitalize()}): "
+                        f"error_code={error_code}, description={description}, "
+                        f"chat_id={chat_id}, message_thread_id={message_thread_id}"
+                    )
+                
+                return result
 
 
 async def send_telegram_media_group(
@@ -168,7 +192,20 @@ async def send_telegram_media_group(
     # Отправляем один POST запрос после добавления всех данных
     async with aiohttp.ClientSession() as session:
         async with session.post(url, data=data) as response:
-            return await response.json()
+            result = await response.json()
+            
+            # Проверяем статус ответа от Telegram API
+            if not result.get('ok'):
+                error_code = result.get('error_code', 'unknown')
+                description = result.get('description', 'Unknown error')
+                raise Exception(
+                    f"Telegram API error (sendMediaGroup): "
+                    f"error_code={error_code}, description={description}, "
+                    f"chat_id={chat_id}, message_thread_id={message_thread_id}, "
+                    f"media_count={len(media_items)}"
+                )
+            
+            return result
 
 
 def _chunk_media_items(items: List[Dict[str, str]], chunk_size: int) -> List[List[Dict[str, str]]]:
@@ -240,31 +277,43 @@ async def send_media_to_telegram_group(
         # Первый батч отправляем без reply, последующие - как ответ на предыдущий
         reply_to_id = first_message_id if batch_index > 0 else None
         
-        batch_result = await send_telegram_media_group(
-            bot_token=bot_token,
-            chat_id=chat_id,
-            media_items=batch,
-            message_thread_id=message_thread_id,
-            reply_to_message_id=reply_to_id,
-        )
+        try:
+            batch_result = await send_telegram_media_group(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                media_items=batch,
+                message_thread_id=message_thread_id,
+                reply_to_message_id=reply_to_id,
+            )
+            
+            if first_message_id is None and batch_result.get('ok') and batch_result.get('result'):
+                first_message = batch_result['result'][0]
+                first_message_id = first_message.get('message_id')
 
-        if first_message_id is None and batch_result.get('ok') and batch_result.get('result'):
-            first_message = batch_result['result'][0]
-            first_message_id = first_message.get('message_id')
-
-        last_response = batch_result
+            last_response = batch_result
+        except Exception as e:
+            # Логируем ошибку перед пробросом
+            print(f"ERROR in send_media_to_telegram_group (batch {batch_index}): {e}")
+            print(f"  Full error details: {repr(e)}")
+            raise
 
     if not message_text:
         return last_response or {"ok": True}
 
-    return await send_telegram_message(
-        bot_token=bot_token,
-        chat_id=chat_id,
-        text=message_text,
-        reply_markup=reply_markup,
-        message_thread_id=message_thread_id,
-        reply_to_message_id=first_message_id,
-    )
+    try:
+        return await send_telegram_message(
+            bot_token=bot_token,
+            chat_id=chat_id,
+            text=message_text,
+            reply_markup=reply_markup,
+            message_thread_id=message_thread_id,
+            reply_to_message_id=first_message_id,
+        )
+    except Exception as e:
+        # Логируем ошибку перед пробросом
+        print(f"ERROR in send_media_to_telegram_group (send message with text): {e}")
+        print(f"  Full error details: {repr(e)}")
+        raise
 
 
 async def get_chat_member(
