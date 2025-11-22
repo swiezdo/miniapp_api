@@ -1886,9 +1886,12 @@ async def approve_mastery_application(
     # Проверяем, что next_level действительно current_level + 1
     expected_next_level = current_level + 1
     if next_level != expected_next_level:
+        error_msg = f"Несоответствие уровней: текущий {current_level}, переданный next_level {next_level}, ожидаемый {expected_next_level}"
+        print(f"ERROR approve_mastery_application: {error_msg}")
+        print(f"  User ID: {user_id}, Category: {category_key}, Current Level: {current_level}, Next Level: {next_level}")
         raise HTTPException(
             status_code=400,
-            detail=f"Несоответствие уровней: текущий {current_level}, переданный next_level {next_level}, ожидаемый {expected_next_level}"
+            detail=error_msg
         )
     
     # Загружаем конфиг для получения информации о категории
@@ -1931,7 +1934,7 @@ async def approve_mastery_application(
             break
     
     category_name = category.get('name', category_key)
-    level_name = level_data.get('name', f'Уровень {next_level}') if level_data else f'Уровень {next_level}'
+    level_name = level_data.get('name', f'Уровень {next_level}') if level_data and isinstance(level_data, dict) else f'Уровень {next_level}'
     
     # Отправляем уведомление пользователю в личку с полной информацией
     try:
@@ -1948,7 +1951,10 @@ async def approve_mastery_application(
             text=user_notification
         )
     except Exception as e:
-        print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+        print(f"ERROR approve_mastery_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        # Не прерываем выполнение, так как уровень уже обновлен
     
     # Отправляем сообщение в группу поздравлений (если указан в .env)
     # Но CONGRATULATIONS_CHAT_ID теперь не в API, нужно передать его боту или вернуть в ответе
@@ -2057,7 +2063,10 @@ async def approve_trophy_application(
             text=user_notification
         )
     except Exception as e:
-        print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+        print(f"ERROR approve_trophy_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        # Не прерываем выполнение, так как трофей уже добавлен
     
     return {
         "status": "ok",

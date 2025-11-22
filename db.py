@@ -566,20 +566,17 @@ def get_user_builds(db_path: str, user_id: int) -> List[Dict[str, Any]]:
             if cursor is None:
                 return []
             
-            # Получаем билды с LEFT JOIN для статистики комментариев и реакций
+            # Получаем билды с подзапросами для статистики комментариев и реакций
+            # Используем подзапросы вместо JOIN, чтобы избежать декартова произведения
             cursor.execute('''
                 SELECT 
                     b.build_id, b.user_id, b.author, b.name, b.class, b.tags, b.description, 
                     b.photo_1, b.photo_2, b.created_at, b.is_public,
-                    COUNT(DISTINCT c.comment_id) as comments_count,
-                    SUM(CASE WHEN r.reaction_type = 'like' THEN 1 ELSE 0 END) as likes_count,
-                    SUM(CASE WHEN r.reaction_type = 'dislike' THEN 1 ELSE 0 END) as dislikes_count
+                    (SELECT COUNT(*) FROM comments c WHERE c.build_id = b.build_id) as comments_count,
+                    (SELECT COUNT(*) FROM build_reactions r WHERE r.build_id = b.build_id AND r.reaction_type = 'like') as likes_count,
+                    (SELECT COUNT(*) FROM build_reactions r WHERE r.build_id = b.build_id AND r.reaction_type = 'dislike') as dislikes_count
                 FROM builds b
-                LEFT JOIN comments c ON b.build_id = c.build_id
-                LEFT JOIN build_reactions r ON b.build_id = r.build_id
                 WHERE b.user_id = ?
-                GROUP BY b.build_id, b.user_id, b.author, b.name, b.class, b.tags, b.description, 
-                         b.photo_1, b.photo_2, b.created_at, b.is_public
                 ORDER BY b.created_at DESC
             ''', (user_id,))
             
@@ -612,20 +609,17 @@ def get_public_builds(db_path: str) -> List[Dict[str, Any]]:
             if cursor is None:
                 return []
             
-            # Получаем билды с LEFT JOIN для статистики комментариев и реакций
+            # Получаем билды с подзапросами для статистики комментариев и реакций
+            # Используем подзапросы вместо JOIN, чтобы избежать декартова произведения
             cursor.execute('''
                 SELECT 
                     b.build_id, b.user_id, b.author, b.name, b.class, b.tags, b.description, 
                     b.photo_1, b.photo_2, b.created_at, b.is_public,
-                    COUNT(DISTINCT c.comment_id) as comments_count,
-                    SUM(CASE WHEN r.reaction_type = 'like' THEN 1 ELSE 0 END) as likes_count,
-                    SUM(CASE WHEN r.reaction_type = 'dislike' THEN 1 ELSE 0 END) as dislikes_count
+                    (SELECT COUNT(*) FROM comments c WHERE c.build_id = b.build_id) as comments_count,
+                    (SELECT COUNT(*) FROM build_reactions r WHERE r.build_id = b.build_id AND r.reaction_type = 'like') as likes_count,
+                    (SELECT COUNT(*) FROM build_reactions r WHERE r.build_id = b.build_id AND r.reaction_type = 'dislike') as dislikes_count
                 FROM builds b
-                LEFT JOIN comments c ON b.build_id = c.build_id
-                LEFT JOIN build_reactions r ON b.build_id = r.build_id
                 WHERE b.is_public = 1
-                GROUP BY b.build_id, b.user_id, b.author, b.name, b.class, b.tags, b.description, 
-                         b.photo_1, b.photo_2, b.created_at, b.is_public
                 ORDER BY b.created_at DESC
             ''')
             
