@@ -52,6 +52,7 @@ from db import (
     log_recent_event,
     get_recent_events,
     get_recent_comments,
+    get_upcoming_birthdays,
 )
 from image_utils import (
     process_image_for_upload,
@@ -216,6 +217,67 @@ def get_current_user(x_telegram_init_data: Optional[str] = Header(None)) -> int:
     return user_id
 
 
+def validate_birthday_format(birthday: Optional[str]) -> bool:
+    """
+    Валидирует формат дня рождения.
+    
+    Форматы:
+    - "DD.MM.YYYY" (полная дата)
+    - "DD.MM" (без года)
+    - Пустая строка или None (не указано)
+    
+    Args:
+        birthday: Строка с днем рождения или None
+    
+    Returns:
+        True если формат корректный, иначе False
+    """
+    if not birthday or not birthday.strip():
+        return True  # Пустая строка допустима
+    
+    birthday = birthday.strip()
+    
+    # Проверяем формат DD.MM.YYYY или DD.MM
+    pattern = r'^(\d{1,2})\.(\d{1,2})(\.(\d{4}))?$'
+    match = re.match(pattern, birthday)
+    
+    if not match:
+        return False
+    
+    day = int(match.group(1))
+    month = int(match.group(2))
+    year_str = match.group(4)
+    
+    # Проверяем диапазоны
+    if day < 1 or day > 31:
+        return False
+    if month < 1 or month > 12:
+        return False
+    
+    # Если год указан, проверяем его
+    if year_str:
+        year = int(year_str)
+        current_year = time.localtime().tm_year
+        if year < 1950 or year > current_year:
+            return False
+        
+        # Проверяем корректность даты (например, 31 февраля недопустимо)
+        try:
+            from datetime import datetime
+            datetime(year, month, day)
+        except ValueError:
+            return False
+    else:
+        # Без года - проверяем только что день допустим для месяца
+        # Для упрощения проверяем только крайние случаи
+        if month == 2 and day > 29:
+            return False
+        if month in [4, 6, 9, 11] and day > 30:
+            return False
+    
+    return True
+
+
 def validate_psn_format(psn: str) -> bool:
     """
     Валидирует формат PSN никнейма.
@@ -269,7 +331,8 @@ async def save_profile(
     platforms: List[str] = Form(default=[]),
     modes: List[str] = Form(default=[]),
     goals: List[str] = Form(default=[]),
-    difficulties: List[str] = Form(default=[])
+    difficulties: List[str] = Form(default=[]),
+    birthday: Optional[str] = Form(default=None)
 ):
     """
     Сохраняет или обновляет профиль пользователя.
@@ -282,6 +345,7 @@ async def save_profile(
         modes: Список режимов
         goals: Список целей
         difficulties: Список сложностей
+        birthday: День рождения в формате "DD.MM.YYYY" или "DD.MM" (опционально)
     
     Returns:
         JSON с результатом операции
@@ -298,6 +362,18 @@ async def save_profile(
             status_code=400,
             detail="Неверный формат PSN никнейма (3-16 символов: A-Z, a-z, 0-9, -, _)"
         )
+    
+    # Валидация дня рождения
+    if birthday and not validate_birthday_format(birthday):
+        raise HTTPException(
+            status_code=400,
+            detail="Неверный формат дня рождения. Используйте формат DD.MM.YYYY или DD.MM"
+        )
+    
+    # Нормализуем формат дня рождения (убираем пробелы, пустые строки преобразуем в None)
+    birthday_normalized = None
+    if birthday and birthday.strip():
+        birthday_normalized = birthday.strip()
 
     # Подготавливаем данные для сохранения
     profile_data = {
@@ -306,7 +382,8 @@ async def save_profile(
         "platforms": platforms,
         "modes": modes,
         "goals": goals,
-        "difficulties": difficulties
+        "difficulties": difficulties,
+        "birthday": birthday_normalized
     }
 
     # Сохраняем профиль
@@ -2155,6 +2232,30 @@ async def get_recent_comments_feed(
 
     comments = [build_comment_view(c) for c in raw_comments]
     return {"comments": comments}
+
+
+@app.get("/api/birthdays.upcoming")
+async def get_upcoming_birthdays_feed(
+    limit: int = Query(3, ge=1, le=10),
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Возвращает список пользователей с ближайшими днями рождения.
+    """
+    from datetime import date
+    
+    raw_birthdays = get_upcoming_birthdays(DB_PATH, limit)
+    
+    # Преобразуем date объекты в строки для JSON
+    result = []
+    for item in raw_birthdays:
+        next_date = item.get('next_birthday_date')
+        if isinstance(next_date, date):
+            # Преобразуем в ISO формат для передачи на фронтенд
+            item['next_birthday_date'] = next_date.isoformat()
+        result.append(item)
+    
+    return {"birthdays": result}
 
 
 @app.post("/api/trophy.reject")

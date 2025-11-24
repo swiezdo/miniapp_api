@@ -9,6 +9,7 @@ import shutil
 import traceback
 from contextlib import contextmanager
 from typing import Dict, Optional, Any, List
+from datetime import datetime, date
 
 # Константы
 MASTERY_CATEGORIES = ["solo", "hellmode", "raid", "speedrun", "glitch"]
@@ -151,6 +152,129 @@ def init_db(db_path: str) -> None:
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
 
+def get_birthday(db_path: str, user_id: int) -> Optional[str]:
+    """
+    Получает день рождения пользователя по user_id.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя Telegram
+    
+    Returns:
+        Строка с днем рождения в формате "DD.MM.YYYY" или "DD.MM", или None
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('''
+                SELECT birthday FROM birthdays WHERE user_id = ?
+            ''', (user_id,))
+            
+            row = cursor.fetchone()
+            
+            if not row or row[0] is None:
+                return None
+            
+            return row[0]
+    except sqlite3.Error as e:
+        print(f"Ошибка получения дня рождения: {e}")
+        return None
+
+
+def get_upcoming_birthdays(db_path: str, limit: int = 3) -> List[Dict[str, Any]]:
+    """
+    Получает список пользователей с ближайшими днями рождения.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        limit: Максимальное количество результатов
+    
+    Returns:
+        Список словарей с данными пользователей:
+        {
+            'user_id': int,
+            'psn_id': str,
+            'avatar_url': str,
+            'birthday': str,  # Формат "DD.MM.YYYY" или "DD.MM"
+            'next_birthday_date': date  # Дата следующего дня рождения
+        }
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            # Получаем всех пользователей с заполненным birthday
+            cursor.execute('''
+                SELECT b.user_id, b.psn_id, b.birthday, u.avatar_url
+                FROM birthdays b
+                LEFT JOIN users u ON b.user_id = u.user_id
+                WHERE b.birthday IS NOT NULL AND b.birthday != ''
+                ORDER BY b.user_id
+            ''')
+            
+            rows = cursor.fetchall()
+            
+            if not rows:
+                return []
+            
+            today = date.today()
+            upcoming = []
+            
+            for row in rows:
+                user_id, psn_id, birthday_str, avatar_url = row
+                
+                if not birthday_str:
+                    continue
+                
+                # Парсим дату рождения
+                parts = birthday_str.split('.')
+                if len(parts) < 2:
+                    continue
+                
+                try:
+                    day = int(parts[0])
+                    month = int(parts[1])
+                    
+                    # Вычисляем следующую дату дня рождения
+                    # Пробуем текущий год
+                    try:
+                        next_birthday = date(today.year, month, day)
+                        # Если день рождения уже прошел в этом году, берем следующий год
+                        if next_birthday < today:
+                            next_birthday = date(today.year + 1, month, day)
+                    except ValueError:
+                        # Если дата невалидна (например, 29 февраля), пропускаем
+                        continue
+                    
+                    upcoming.append({
+                        'user_id': user_id,
+                        'psn_id': psn_id or '',
+                        'avatar_url': avatar_url,
+                        'birthday': birthday_str,
+                        'next_birthday_date': next_birthday
+                    })
+                except (ValueError, IndexError):
+                    continue
+            
+            # Сортируем по дате следующего дня рождения
+            upcoming.sort(key=lambda x: x['next_birthday_date'])
+            
+            # Возвращаем первые limit записей
+            return upcoming[:limit]
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка получения ближайших дней рождения: {e}")
+        traceback.print_exc()
+        return []
+    except Exception as e:
+        print(f"Ошибка обработки дней рождения: {e}")
+        traceback.print_exc()
+        return []
+
+
 def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
     """
     Получает профиль пользователя по user_id.
@@ -177,6 +301,9 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
             if not row:
                 return None
             
+            # Получаем день рождения из таблицы birthdays
+            birthday = get_birthday(db_path, user_id)
+            
             # Преобразуем в словарь
             profile = {
                 'user_id': row[0],
@@ -186,7 +313,8 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
                 'modes': parse_comma_separated_list(row[4]),
                 'goals': parse_comma_separated_list(row[5]),
                 'difficulties': parse_comma_separated_list(row[6]),
-                'avatar_url': row[7]
+                'avatar_url': row[7],
+                'birthday': birthday
             }
             
             return profile
@@ -230,8 +358,18 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
             cursor.execute('SELECT user_id FROM trophies WHERE user_id = ?', (user_id,))
             trophies_exists = cursor.fetchone() is not None
 
+            # Проверяем существует ли запись в birthdays
+            cursor.execute('SELECT user_id FROM birthdays WHERE user_id = ?', (user_id,))
+            birthdays_exists = cursor.fetchone() is not None
+
             # Получаем avatar_url только если оно явно передано
             avatar_url = profile_data.get('avatar_url')
+            
+            # Получаем birthday из profile_data
+            birthday = profile_data.get('birthday')
+            # Преобразуем пустую строку в None
+            if birthday is not None and birthday.strip() == '':
+                birthday = None
             
             if user_exists:
                 # UPDATE существующего пользователя
@@ -269,26 +407,56 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                         user_id
                     ))
                 
+                # Получаем psn_id один раз для всех обновлений
+                psn_id = profile_data.get('psn_id', '') or ''
+                
                 # Убеждаемся что запись в mastery существует (создаём если её нет)
                 if not mastery_exists:
-                    psn_id = profile_data.get('psn_id', '') or ''
                     cursor.execute('''
                         INSERT INTO mastery (user_id, psn_id, solo, hellmode, raid, speedrun, glitch)
                         VALUES (?, ?, 0, 0, 0, 0, 0)
                     ''', (user_id, psn_id))
                 else:
                     # Обновляем psn_id в mastery если запись существует
-                    psn_id = profile_data.get('psn_id', '') or ''
                     cursor.execute('''
                         UPDATE mastery SET psn_id = ? WHERE user_id = ?
                     ''', (psn_id, user_id))
                 
-                # Обновляем psn_id в trophies если запись существует
+                # Обновляем или создаем запись в trophies
                 if trophies_exists:
-                    psn_id = profile_data.get('psn_id', '') or ''
+                    # Обновляем psn_id в trophies если запись существует
                     cursor.execute('''
                         UPDATE trophies SET psn_id = ? WHERE user_id = ?
                     ''', (psn_id, user_id))
+                else:
+                    # Создаем новую запись в trophies
+                    cursor.execute('''
+                        INSERT INTO trophies (user_id, psn_id, trophies, active_trophies)
+                        VALUES (?, ?, ?, ?)
+                    ''', (user_id, psn_id, '', ''))
+                
+                # Обновляем или создаем запись в birthdays
+                if birthdays_exists:
+                    # Обновляем существующую запись
+                    cursor.execute('''
+                        UPDATE birthdays SET psn_id = ?, birthday = ? WHERE user_id = ?
+                    ''', (psn_id, birthday, user_id))
+                else:
+                    # Создаем новую запись
+                    cursor.execute('''
+                        INSERT INTO birthdays (user_id, psn_id, birthday)
+                        VALUES (?, ?, ?)
+                    ''', (user_id, psn_id, birthday))
+                
+                # Обновляем psn_id в recent_events
+                cursor.execute('''
+                    UPDATE recent_events SET psn_id = ? WHERE user_id = ?
+                ''', (psn_id, user_id))
+                
+                # Обновляем author в builds (author = psn_id)
+                cursor.execute('''
+                    UPDATE builds SET author = ? WHERE user_id = ?
+                ''', (psn_id, user_id))
             else:
                 # INSERT нового пользователя
                 cursor.execute('''
@@ -321,6 +489,14 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                         INSERT INTO trophies (user_id, psn_id, trophies, active_trophies)
                         VALUES (?, ?, ?, ?)
                     ''', (user_id, psn_id, '', ''))
+                
+                # Автоматически создаём запись в birthdays для нового пользователя (только если её нет)
+                if not birthdays_exists:
+                    psn_id = profile_data.get('psn_id', '') or ''
+                    cursor.execute('''
+                        INSERT INTO birthdays (user_id, psn_id, birthday)
+                        VALUES (?, ?, ?)
+                    ''', (user_id, psn_id, birthday))
             
             return True
         
