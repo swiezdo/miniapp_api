@@ -292,7 +292,7 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
                 return None
             
             cursor.execute('''
-                SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties, avatar_url
+                SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties, avatar_url, balance
                 FROM users WHERE user_id = ?
             ''', (user_id,))
             
@@ -314,7 +314,8 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
                 'goals': parse_comma_separated_list(row[5]),
                 'difficulties': parse_comma_separated_list(row[6]),
                 'avatar_url': row[7],
-                'birthday': birthday
+                'birthday': birthday,
+                'balance': row[8] if len(row) > 8 else 0
             }
             
             return profile
