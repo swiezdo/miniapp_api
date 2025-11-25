@@ -53,6 +53,7 @@ from db import (
     get_recent_events,
     get_recent_comments,
     get_upcoming_birthdays,
+    get_current_hellmode_quest,
 )
 from image_utils import (
     process_image_for_upload,
@@ -634,6 +635,19 @@ async def get_current_rotation():
         raise HTTPException(status_code=500, detail="Ошибка получения текущей недели")
     
     return {"week": week}
+
+
+@app.get("/api/quests.hellmode")
+async def get_hellmode_quest():
+    """
+    Возвращает текущее задание HellMode.
+    """
+    quest = get_current_hellmode_quest(DB_PATH)
+    
+    if quest is None:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    
+    return quest
 
 
 def _read_waves_json() -> dict:
