@@ -2007,4 +2007,101 @@ def update_rotation_week(db_path: str) -> bool:
         print(f"Ошибка обновления недели ротации: {e}")
         traceback.print_exc()
         return False
+
+
+def get_current_hellmode_quest(db_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает текущее задание HellMode из базы данных.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        Словарь с полями: map_slug, map_name, emote, class, gear, reward
+        или None если задание не найдено или пустое
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('''
+                SELECT map_slug, map_name, emote, class, gear, reward
+                FROM hellmode_quest
+                LIMIT 1
+            ''')
+            
+            row = cursor.fetchone()
+            if not row:
+                return None
+            
+            map_slug, map_name, emote_slug, class_slug, gear_slug, reward = row
+            
+            # Проверяем, что задание не пустое
+            if not map_slug or not emote_slug or not class_slug or not gear_slug:
+                return None
+            
+            return {
+                'map_slug': map_slug,
+                'map_name': map_name,
+                'emote': emote_slug,
+                'class': class_slug,
+                'gear': gear_slug,
+                'reward': reward
+            }
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка получения текущего задания HellMode: {e}")
+        traceback.print_exc()
+        return None
+
+
+def update_hellmode_quest(
+    db_path: str,
+    map_slug: str,
+    map_name: str,
+    emote_slug: str,
+    class_slug: str,
+    gear_slug: str,
+    reward: int
+) -> bool:
+    """
+    Обновляет текущее задание HellMode в базе данных.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        map_slug: Slug карты
+        map_name: Название карты
+        emote_slug: Slug эмоции
+        class_slug: Slug класса
+        gear_slug: Slug снаряжения
+        reward: Награда за выполнение
+    
+    Returns:
+        True если обновление успешно, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Обновляем запись (в таблице всегда только одна запись)
+            cursor.execute('''
+                UPDATE hellmode_quest
+                SET map_slug = ?, map_name = ?, emote = ?, class = ?, gear = ?, reward = ?
+            ''', (map_slug, map_name, emote_slug, class_slug, gear_slug, reward))
+            
+            # Если запись не была обновлена (не существует), создаем новую
+            if cursor.rowcount == 0:
+                cursor.execute('''
+                    INSERT INTO hellmode_quest (map_slug, map_name, emote, class, gear, reward)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (map_slug, map_name, emote_slug, class_slug, gear_slug, reward))
+            
+            return True
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка обновления задания HellMode: {e}")
+        traceback.print_exc()
+        return False
         
