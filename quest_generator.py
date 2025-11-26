@@ -21,6 +21,7 @@ load_dotenv()
 DB_PATH = os.getenv("DB_PATH", "/root/miniapp_api/app.db")
 QUESTS_JSON_PATH = "/root/tsushimaru_app/docs/assets/data/quests.json"
 MAX_ATTEMPTS = 10
+BASE_REWARD = 350  # Базовая награда за задание
 
 
 def load_quests_config() -> dict:
@@ -47,7 +48,7 @@ def load_quests_config() -> dict:
     
     hellmode = config['hellmode']
     
-    required_fields = ['baseReward', 'map', 'emote', 'class', 'gear']
+    required_fields = ['map', 'emote', 'class', 'gear']
     for field in required_fields:
         if field not in hellmode:
             raise KeyError(f"Отсутствует поле '{field}' в секции 'hellmode'")
@@ -75,23 +76,28 @@ def generate_random_quest(hellmode_config: dict) -> dict:
     map_slug = map_item['slug']
     map_name = map_item['name']
     emote_slug = emote_item['slug']
+    emote_name = emote_item['name']
     class_slug = class_item['slug']
+    class_name = class_item['name']
     gear_slug = gear_item['slug']
+    gear_name = gear_item['name']
     
     # Рассчитываем награду
-    base_reward = hellmode_config['baseReward']
-    map_bonus = map_item['bonus']
-    class_bonus = class_item['bonus']
-    gear_bonus = gear_item['bonus']
+    map_bonus = map_item.get('bonus', 0)
+    class_bonus = class_item.get('bonus', 0)
+    gear_bonus = gear_item.get('bonus', 0)
     
-    reward = base_reward + map_bonus + class_bonus + gear_bonus
+    reward = BASE_REWARD + map_bonus + class_bonus + gear_bonus
     
     return {
         'map_slug': map_slug,
         'map_name': map_name,
         'emote_slug': emote_slug,
+        'emote_name': emote_name,
         'class_slug': class_slug,
+        'class_name': class_name,
         'gear_slug': gear_slug,
+        'gear_name': gear_name,
         'reward': reward
     }
 
@@ -114,19 +120,8 @@ def has_duplicates(new_quest: dict, current_quest: Optional[dict]) -> bool:
     fields_to_check = ['map_slug', 'emote_slug', 'class_slug', 'gear_slug']
     
     for field in fields_to_check:
-        # Преобразуем имена полей для сравнения с БД
-        if field == 'map_slug':
-            db_field = 'map_slug'
-        elif field == 'emote_slug':
-            db_field = 'emote'
-        elif field == 'class_slug':
-            db_field = 'class'
-        elif field == 'gear_slug':
-            db_field = 'gear'
-        else:
-            db_field = field.replace('_slug', '')
-        
-        if new_quest[field] == current_quest[db_field]:
+        # Поля в БД теперь имеют те же названия
+        if new_quest[field] == current_quest[field]:
             return True
     
     return False
@@ -187,9 +182,9 @@ def main():
                 print(f"  Карта: {map_name} ({current_quest['map_slug']})")
             else:
                 print(f"  Карта: {current_quest['map_slug']}")
-            print(f"  Эмоция: {current_quest['emote']}")
-            print(f"  Класс: {current_quest['class']}")
-            print(f"  Снаряжение: {current_quest['gear']}")
+            print(f"  Эмоция: {current_quest.get('emote_name', '')} ({current_quest['emote_slug']})")
+            print(f"  Класс: {current_quest.get('class_name', '')} ({current_quest['class_slug']})")
+            print(f"  Снаряжение: {current_quest.get('gear_name', '')} ({current_quest['gear_slug']})")
             print(f"  Награда: {current_quest['reward']}")
         else:
             print("Текущее задание отсутствует (будет создано новое).")
@@ -216,9 +211,9 @@ def main():
         
         print(f"\nНовое задание:")
         print(f"  Карта: {new_quest['map_name']} ({new_quest['map_slug']})")
-        print(f"  Эмоция: {new_quest['emote_slug']}")
-        print(f"  Класс: {new_quest['class_slug']}")
-        print(f"  Снаряжение: {new_quest['gear_slug']}")
+        print(f"  Эмоция: {new_quest['emote_name']} ({new_quest['emote_slug']})")
+        print(f"  Класс: {new_quest['class_name']} ({new_quest['class_slug']})")
+        print(f"  Снаряжение: {new_quest['gear_name']} ({new_quest['gear_slug']})")
         print(f"  Награда: {new_quest['reward']}")
         
         # Сохраняем в БД
@@ -228,8 +223,11 @@ def main():
             new_quest['map_slug'],
             new_quest['map_name'],
             new_quest['emote_slug'],
+            new_quest['emote_name'],
             new_quest['class_slug'],
+            new_quest['class_name'],
             new_quest['gear_slug'],
+            new_quest['gear_name'],
             new_quest['reward']
         ):
             print("Задание успешно сохранено!")

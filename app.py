@@ -98,6 +98,9 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "")
 # ID основной группы (используется для проверки участников)
 GROUP_ID = os.getenv("GROUP_ID", "-1002365374672")
 # Ссылка на группу для приглашения
+
+# Константа для доказательства задания HellMode
+HELLMODE_PROOF = "Сохранить короткое видео на котором видно:\n1. Использование эмоции недели\n2. Получение наград\n3. Экран статистики на котором видно что сделано минимум 80 убийств.\n4. Экран лобби, где вы показываете надетое снаряжение."
 GROUP_INVITE_LINK = os.getenv("GROUP_INVITE_LINK", "https://t.me/+ZFiVYVrz-PEzYjBi")
 
 # Путь к данным волн
@@ -646,6 +649,9 @@ async def get_hellmode_quest():
     
     if quest is None:
         raise HTTPException(status_code=404, detail="Задание не найдено")
+    
+    # Добавляем константу proof к ответу
+    quest['proof'] = HELLMODE_PROOF
     
     return quest
 

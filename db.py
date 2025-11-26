@@ -2017,7 +2017,7 @@ def get_current_hellmode_quest(db_path: str) -> Optional[Dict[str, Any]]:
         db_path: Путь к файлу базы данных
     
     Returns:
-        Словарь с полями: map_slug, map_name, emote, class, gear, reward
+        Словарь с полями: map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward
         или None если задание не найдено или пустое
     """
     try:
@@ -2026,7 +2026,7 @@ def get_current_hellmode_quest(db_path: str) -> Optional[Dict[str, Any]]:
                 return None
             
             cursor.execute('''
-                SELECT map_slug, map_name, emote, class, gear, reward
+                SELECT map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward
                 FROM hellmode_quest
                 LIMIT 1
             ''')
@@ -2035,7 +2035,7 @@ def get_current_hellmode_quest(db_path: str) -> Optional[Dict[str, Any]]:
             if not row:
                 return None
             
-            map_slug, map_name, emote_slug, class_slug, gear_slug, reward = row
+            map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward = row
             
             # Проверяем, что задание не пустое
             if not map_slug or not emote_slug or not class_slug or not gear_slug:
@@ -2044,9 +2044,12 @@ def get_current_hellmode_quest(db_path: str) -> Optional[Dict[str, Any]]:
             return {
                 'map_slug': map_slug,
                 'map_name': map_name,
-                'emote': emote_slug,
-                'class': class_slug,
-                'gear': gear_slug,
+                'emote_slug': emote_slug,
+                'emote_name': emote_name,
+                'class_slug': class_slug,
+                'class_name': class_name,
+                'gear_slug': gear_slug,
+                'gear_name': gear_name,
                 'reward': reward
             }
             
@@ -2061,8 +2064,11 @@ def update_hellmode_quest(
     map_slug: str,
     map_name: str,
     emote_slug: str,
+    emote_name: str,
     class_slug: str,
+    class_name: str,
     gear_slug: str,
+    gear_name: str,
     reward: int
 ) -> bool:
     """
@@ -2073,8 +2079,11 @@ def update_hellmode_quest(
         map_slug: Slug карты
         map_name: Название карты
         emote_slug: Slug эмоции
+        emote_name: Название эмоции
         class_slug: Slug класса
+        class_name: Название класса
         gear_slug: Slug снаряжения
+        gear_name: Название снаряжения
         reward: Награда за выполнение
     
     Returns:
@@ -2088,15 +2097,25 @@ def update_hellmode_quest(
             # Обновляем запись (в таблице всегда только одна запись)
             cursor.execute('''
                 UPDATE hellmode_quest
-                SET map_slug = ?, map_name = ?, emote = ?, class = ?, gear = ?, reward = ?
-            ''', (map_slug, map_name, emote_slug, class_slug, gear_slug, reward))
+                SET map_slug = ?, map_name = ?, 
+                    emote_slug = ?, emote_name = ?,
+                    class_slug = ?, class_name = ?,
+                    gear_slug = ?, gear_name = ?,
+                    reward = ?
+            ''', (map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward))
             
             # Если запись не была обновлена (не существует), создаем новую
             if cursor.rowcount == 0:
                 cursor.execute('''
-                    INSERT INTO hellmode_quest (map_slug, map_name, emote, class, gear, reward)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (map_slug, map_name, emote_slug, class_slug, gear_slug, reward))
+                    INSERT INTO hellmode_quest (
+                        map_slug, map_name, 
+                        emote_slug, emote_name,
+                        class_slug, class_name,
+                        gear_slug, gear_name,
+                        reward
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward))
             
             return True
             
