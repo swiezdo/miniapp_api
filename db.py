@@ -2151,4 +2151,62 @@ def update_hellmode_quest(
         print(f"Ошибка обновления задания HellMode: {e}")
         traceback.print_exc()
         return False
-        
+
+
+def get_top100_current_prize(db_path: str) -> Optional[int]:
+    """
+    Получает текущее значение приза Top100.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        Текущее значение приза или None если не найдено
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('SELECT value FROM top100_current_prize LIMIT 1')
+            row = cursor.fetchone()
+            
+            if row:
+                return row[0]
+            return None
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка получения приза Top100: {e}")
+        traceback.print_exc()
+        return None
+
+
+def update_top100_current_prize(db_path: str, value: int) -> bool:
+    """
+    Обновляет значение приза Top100.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        value: Новое значение приза
+    
+    Returns:
+        True если обновление успешно, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Обновляем значение (в таблице всегда только одна запись)
+            cursor.execute('UPDATE top100_current_prize SET value = ?', (value,))
+            
+            # Если запись не была обновлена (не существует), создаем новую
+            if cursor.rowcount == 0:
+                cursor.execute('INSERT INTO top100_current_prize (value) VALUES (?)', (value,))
+            
+            return True
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка обновления приза Top100: {e}")
+        traceback.print_exc()
+        return False
