@@ -48,6 +48,7 @@ from db import (
     update_active_trophies,
     delete_user_all_data,
     get_current_rotation_week,
+    get_top100_current_prize,
     update_rotation_week,
     log_recent_event,
     get_recent_events,
@@ -3660,6 +3661,31 @@ async def send_profile_screenshot(
         raise HTTPException(
             status_code=500,
             detail=f"Ошибка при создании скриншота: {str(e)}"
+        )
+
+
+@app.get("/api/top100.prize")
+async def get_top100_prize(user_id: int = Depends(get_current_user)):
+    """
+    Получить текущее значение приза Top100.
+    """
+    try:
+        prize = get_top100_current_prize(DB_PATH)
+        if prize is None:
+            raise HTTPException(status_code=500, detail="Не удалось получить значение приза Top100")
+        
+        return {
+            "status": "ok",
+            "prize": prize
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка при получении приза Top100: {e}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка при получении приза Top100: {str(e)}"
         )
 
 
