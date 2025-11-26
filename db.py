@@ -457,7 +457,7 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 # Обновляем author в builds (author = psn_id)
                 cursor.execute('''
                     UPDATE builds SET author = ? WHERE user_id = ?
-                ''', (psn_id, user_id))
+                    ''', (psn_id, user_id))
             else:
                 # INSERT нового пользователя
                 cursor.execute('''
