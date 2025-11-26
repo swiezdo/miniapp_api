@@ -130,3 +130,4 @@ if __name__ == "__main__":
     print("Запуск миграции таблицы hellmode_quest...")
     migrate_hellmode_quest_table()
 
+

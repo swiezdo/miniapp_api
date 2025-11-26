@@ -324,6 +324,34 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
         return None
 
 
+def update_user_balance(db_path: str, user_id: int, amount: int) -> bool:
+    """
+    Увеличивает баланс пользователя на указанную сумму.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя Telegram
+        amount: Сумма для добавления к балансу
+    
+    Returns:
+        True при успешном обновлении, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            cursor.execute('''
+                UPDATE users SET balance = balance + ? WHERE user_id = ?
+            ''', (amount, user_id))
+            
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"Ошибка обновления баланса пользователя: {e}")
+        traceback.print_exc()
+        return False
+
+
 def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> bool:
     """
     Сохраняет или обновляет профиль пользователя.

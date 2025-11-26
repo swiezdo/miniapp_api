@@ -54,6 +54,7 @@ from db import (
     get_recent_comments,
     get_upcoming_birthdays,
     get_current_hellmode_quest,
+    update_user_balance,
 )
 from image_utils import (
     process_image_for_upload,
@@ -2334,6 +2335,303 @@ async def reject_trophy_application(
         "status": "ok",
         "success": True,
         "trophy_name": trophy_name
+    }
+
+
+@app.post("/api/hellmodeQuest.submit")
+async def submit_hellmode_quest_application(
+    user_id: int = Depends(get_current_user),
+    comment: Optional[str] = Form(default=None),
+    photos: Optional[List[UploadFile]] = File(default=None)
+):
+    """
+    Отправляет заявку на выполнение задания HellMode в админскую группу.
+    """
+    # Получаем профиль пользователя для получения psn_id
+    user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
+    
+    # Получаем текущее задание
+    quest = get_current_hellmode_quest(DB_PATH)
+    if not quest:
+        raise HTTPException(
+            status_code=400,
+            detail="Текущее задание HellMode не найдено"
+        )
+    
+    # Валидация
+    media_files = photos or []
+
+    if len(media_files) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Необходимо прикрепить хотя бы один файл (изображение или видео)"
+        )
+    
+    if len(media_files) > MAX_MEDIA_ATTACHMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Можно прикрепить не более {MAX_MEDIA_ATTACHMENTS} файлов"
+        )
+    
+    normalized_media = []
+    for upload in media_files:
+        media_kind = detect_media_type(upload)
+        if media_kind not in {'photo', 'video'}:
+            raise HTTPException(
+                status_code=400,
+                detail="Разрешены только изображения и видео (MP4, MOV)."
+            )
+        normalized_media.append((upload, media_kind))
+    
+    # Формируем сообщение для группы
+    map_name = quest.get('map_name', '')
+    class_name = quest.get('class_name', '')
+    gear_name = quest.get('gear_name', '')
+    emote_name = quest.get('emote_name', '')
+    reward = quest.get('reward', 0)
+    
+    comment_text = comment.strip() if comment and comment.strip() else "Без комментария"
+    
+    message_text = f"""🎯 <b>Заявка на задание HellMode</b>
+
+👤 <b>PSN ID:</b> {psn_id}
+🗺️ <b>Карта:</b> {map_name}
+⚔️ <b>Класс:</b> {class_name}
+🛡️ <b>Орудие:</b> {gear_name}
+😊 <b>Эмоция:</b> {emote_name}
+💰 <b>Награда:</b> {reward} 🪙
+
+💬 <b>Комментарий:</b> {comment_text}"""
+    
+    # Создаем inline кнопки
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "Одобрить",
+                    "callback_data": f"approve_hellmodeQuest:{user_id}"
+                },
+                {
+                    "text": "Отклонить",
+                    "callback_data": f"reject_hellmodeQuest:{user_id}"
+                }
+            ]
+        ]
+    }
+    
+    # Валидация переменных окружения перед отправкой
+    if not BOT_TOKEN:
+        raise HTTPException(
+            status_code=500,
+            detail="BOT_TOKEN не настроен. Обратитесь к администратору."
+        )
+    if not TROPHY_GROUP_CHAT_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="TROPHY_GROUP_CHAT_ID не настроен. Обратитесь к администратору."
+        )
+    if not TROPHY_GROUP_TOPIC_ID:
+        print(f"WARNING: TROPHY_GROUP_TOPIC_ID не установлен. Заявка будет отправлена без указания темы.")
+    
+    # Обрабатываем и отправляем фотографии
+    try:
+        with temp_image_directory(prefix='hellmode_quest_app_') as temp_dir:
+            media_payload = []
+            
+            for index, (upload, media_kind) in enumerate(normalized_media, start=1):
+                if media_kind == 'photo':
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+
+                    photo_path = os.path.join(temp_dir, f'media_{index}.jpg')
+                    image = Image.open(upload.file)
+                    process_image_for_upload(image, photo_path)
+                    media_payload.append({
+                        "type": "photo",
+                        "path": photo_path,
+                    })
+
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+                else:
+                    extension = guess_media_extension(upload, default='.mp4')
+                    if not extension.startswith('.'):
+                        extension = f'.{extension}'
+
+                    video_path = os.path.join(temp_dir, f'media_{index}{extension}')
+                    save_upload_file(upload, video_path)
+                    media_payload.append({
+                        "type": "video",
+                        "path": video_path,
+                    })
+            
+            # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
+            try:
+                print(f"Отправка заявки на задание HellMode в группу: user_id={user_id}, "
+                      f"chat_id={TROPHY_GROUP_CHAT_ID}, topic_id={TROPHY_GROUP_TOPIC_ID}, "
+                      f"media_count={len(media_payload)}")
+                
+                await send_media_to_telegram_group(
+                    bot_token=BOT_TOKEN,
+                    chat_id=TROPHY_GROUP_CHAT_ID,
+                    media_items=media_payload,
+                    message_text=message_text,
+                    reply_markup=reply_markup,
+                    message_thread_id=TROPHY_GROUP_TOPIC_ID
+                )
+                print(f"Заявка на задание HellMode успешно отправлена в группу: user_id={user_id}")
+            except Exception as e:
+                print(f"ERROR: Ошибка отправки заявки на задание HellMode в группу: {e}")
+                print(f"  User ID: {user_id}")
+                print(f"  Chat ID: {TROPHY_GROUP_CHAT_ID}, Topic ID: {TROPHY_GROUP_TOPIC_ID}")
+                traceback.print_exc()
+                
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Ошибка отправки заявки в группу модераторов: {str(e)}. "
+                           f"Попробуйте позже или обратитесь к администратору."
+                )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка обработки изображений: {str(e)}"
+        )
+    
+    return {
+        "status": "ok",
+        "success": True
+    }
+
+
+@app.post("/api/hellmodeQuest.approve")
+async def approve_hellmode_quest_application(
+    user_id: int = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Одобряет заявку на выполнение задания HellMode.
+    Вызывается ботом при нажатии кнопки "Одобрить".
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Получаем текущее задание
+    quest = get_current_hellmode_quest(DB_PATH)
+    if not quest:
+        raise HTTPException(status_code=400, detail="Текущее задание HellMode не найдено")
+    
+    # Получаем награду из задания
+    reward = quest.get('reward', 0)
+    if reward <= 0:
+        raise HTTPException(status_code=400, detail="Награда за задание не указана или равна нулю")
+    
+    # Обновляем баланс пользователя
+    success = update_user_balance(DB_PATH, user_id, reward)
+    if not success:
+        raise HTTPException(status_code=500, detail="Ошибка обновления баланса в БД")
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    psn_id = user_profile.get('psn_id', '')
+    
+    # Получаем информацию о задании для уведомлений
+    map_name = quest.get('map_name', '')
+    class_name = quest.get('class_name', '')
+    gear_name = quest.get('gear_name', '')
+    emote_name = quest.get('emote_name', '')
+    
+    # Отправляем уведомление пользователю в личку
+    try:
+        user_notification = f"""✅ <b>Ваша заявка на задание HellMode была одобрена!</b>
+
+🗺️ <b>Карта:</b> {map_name}
+⚔️ <b>Класс:</b> {class_name}
+🛡️ <b>Орудие:</b> {gear_name}
+😊 <b>Эмоция:</b> {emote_name}
+
+💰 <b>Награда:</b> +{reward} 🪙"""
+        
+        await send_telegram_message(
+            bot_token=BOT_TOKEN,
+            chat_id=str(user_id),
+            text=user_notification
+        )
+    except Exception as e:
+        print(f"ERROR approve_hellmode_quest_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
+        traceback.print_exc()
+        # Не прерываем выполнение, так как баланс уже обновлен
+    
+    # Поздравление отправляется из бота, а не из API (как для трофеев)
+    
+    return {
+        "status": "ok",
+        "success": True,
+        "psn_id": psn_id,
+        "user_id": user_id,
+        "reward": reward
+    }
+
+
+@app.post("/api/hellmodeQuest.reject")
+async def reject_hellmode_quest_application(
+    user_id: int = Form(...),
+    reason: str = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Отклоняет заявку на выполнение задания HellMode.
+    Вызывается ботом после получения причины отклонения от модератора.
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Получаем текущее задание для информации в уведомлении
+    quest = get_current_hellmode_quest(DB_PATH)
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    # Получаем информацию о задании для уведомления
+    map_name = quest.get('map_name', '') if quest else ''
+    class_name = quest.get('class_name', '') if quest else ''
+    gear_name = quest.get('gear_name', '') if quest else ''
+    emote_name = quest.get('emote_name', '') if quest else ''
+    
+    # Отправляем уведомление пользователю в личку
+    try:
+        user_notification = f"""❌ <b>К сожалению, ваша заявка на задание HellMode была отклонена.</b>
+
+🗺️ <b>Карта:</b> {map_name}
+⚔️ <b>Класс:</b> {class_name}
+🛡️ <b>Орудие:</b> {gear_name}
+😊 <b>Эмоция:</b> {emote_name}
+
+Причина: {reason}"""
+        
+        await send_telegram_message(
+            bot_token=BOT_TOKEN,
+            chat_id=str(user_id),
+            text=user_notification
+        )
+    except Exception as e:
+        print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+    
+    return {
+        "status": "ok",
+        "success": True
     }
 
 
