@@ -2210,3 +2210,216 @@ def update_top100_current_prize(db_path: str, value: int) -> bool:
         print(f"Ошибка обновления приза Top100: {e}")
         traceback.print_exc()
         return False
+
+
+def mark_quest_done(db_path: str, user_id: int, psn_id: str, quest_type: str) -> bool:
+    """
+    Отмечает задание как выполненное для пользователя.
+    Увеличивает all_completed на 1, если все 4 задания выполнены.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        psn_id: PSN ID пользователя
+        quest_type: Тип задания ('hellmode', 'story', 'survival', 'trials')
+    
+    Returns:
+        True если обновление успешно, иначе False
+    """
+    valid_quest_types = {'hellmode', 'story', 'survival', 'trials'}
+    if quest_type not in valid_quest_types:
+        print(f"Ошибка: недопустимый тип задания: {quest_type}")
+        return False
+    
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Получаем текущее состояние
+            cursor.execute('''
+                SELECT hellmode, story, survival, trials, all_completed
+                FROM quests_done
+                WHERE user_id = ?
+            ''', (user_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                hellmode, story, survival, trials, all_completed = row
+            else:
+                # Записи нет, создаем новую
+                hellmode, story, survival, trials, all_completed = 0, 0, 0, 0, 0
+            
+            # Вычисляем сумму заданий до обновления
+            sum_before = hellmode + story + survival + trials
+            
+            # Обновляем соответствующее поле на 1
+            if quest_type == 'hellmode':
+                hellmode = 1
+            elif quest_type == 'story':
+                story = 1
+            elif quest_type == 'survival':
+                survival = 1
+            elif quest_type == 'trials':
+                trials = 1
+            
+            # Вычисляем сумму после обновления
+            sum_after = hellmode + story + survival + trials
+            
+            # Если все 4 задания выполнены И до обновления не все были выполнены
+            if sum_after == 4 and sum_before < 4:
+                all_completed = all_completed + 1
+            
+            # Вставляем или обновляем запись
+            cursor.execute('''
+                INSERT OR REPLACE INTO quests_done 
+                (user_id, psn_id, hellmode, story, survival, trials, all_completed)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, psn_id, hellmode, story, survival, trials, all_completed))
+            
+            return True
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка отметки задания как выполненного: {e}")
+        traceback.print_exc()
+        return False
+
+
+def is_quest_done(db_path: str, user_id: int, quest_type: str) -> bool:
+    """
+    Проверяет, выполнено ли задание пользователем на текущей неделе.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        quest_type: Тип задания ('hellmode', 'story', 'survival', 'trials')
+    
+    Returns:
+        True если задание выполнено, иначе False
+    """
+    valid_quest_types = {'hellmode', 'story', 'survival', 'trials'}
+    if quest_type not in valid_quest_types:
+        return False
+    
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            cursor.execute(f'''
+                SELECT {quest_type}
+                FROM quests_done
+                WHERE user_id = ?
+            ''', (user_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                return row[0] == 1
+            return False
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка проверки выполнения задания: {e}")
+        traceback.print_exc()
+        return False
+
+
+def reset_weekly_quests(db_path: str) -> bool:
+    """
+    Сбрасывает задания для новой недели.
+    
+    Логика сброса:
+    - Для пользователей с all_completed > 0:
+      * Если все 4 задания выполнены: сбросить только задания (в 0), сохранить all_completed
+      * Если не все задания выполнены: сбросить all_completed в 0 и удалить запись
+    - Для пользователей с all_completed = 0: удалить запись
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        True если сброс успешен, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Получаем всех пользователей с их статусом
+            cursor.execute('''
+                SELECT user_id, hellmode, story, survival, trials, all_completed
+                FROM quests_done
+            ''')
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                user_id, hellmode, story, survival, trials, all_completed = row
+                
+                # Считаем количество выполненных заданий
+                completed_count = hellmode + story + survival + trials
+                
+                if all_completed > 0:
+                    # Если все 4 задания выполнены - сбросить только задания, сохранить all_completed
+                    if completed_count == 4:
+                        cursor.execute('''
+                            UPDATE quests_done
+                            SET hellmode = 0, story = 0, survival = 0, trials = 0
+                            WHERE user_id = ?
+                        ''', (user_id,))
+                    else:
+                        # Если не все задания выполнены - сбросить прогресс и удалить запись
+                        cursor.execute('''
+                            DELETE FROM quests_done
+                            WHERE user_id = ?
+                        ''', (user_id,))
+                else:
+                    # Если all_completed = 0 - удалить запись
+                    cursor.execute('''
+                        DELETE FROM quests_done
+                        WHERE user_id = ?
+                    ''', (user_id,))
+            
+            return True
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка сброса заданий: {e}")
+        traceback.print_exc()
+        return False
+
+
+def get_user_quests_status(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает статус всех заданий пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Словарь с статусом заданий или None если запись не найдена
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('''
+                SELECT hellmode, story, survival, trials, all_completed
+                FROM quests_done
+                WHERE user_id = ?
+            ''', (user_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                return {
+                    'hellmode': bool(row[0]),
+                    'story': bool(row[1]),
+                    'survival': bool(row[2]),
+                    'trials': bool(row[3]),
+                    'all_completed': row[4]
+                }
+            return None
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка получения статуса заданий: {e}")
+        traceback.print_exc()
+        return None

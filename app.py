@@ -56,6 +56,9 @@ from db import (
     get_upcoming_birthdays,
     get_current_hellmode_quest,
     update_user_balance,
+    is_quest_done,
+    mark_quest_done,
+    reset_weekly_quests,
 )
 from image_utils import (
     process_image_for_upload,
@@ -2359,6 +2362,13 @@ async def submit_hellmode_quest_application(
             detail="Текущее задание HellMode не найдено"
         )
     
+    # Проверяем, не выполнено ли уже задание на этой неделе
+    if is_quest_done(DB_PATH, user_id, 'hellmode'):
+        raise HTTPException(
+            status_code=400,
+            detail="Вы уже выполнили это задание на этой неделе"
+        )
+    
     # Валидация
     media_files = photos or []
 
@@ -2539,6 +2549,10 @@ async def approve_hellmode_quest_application(
     
     # Получаем информацию о пользователе
     user_profile = get_user(DB_PATH, user_id)
+    
+    # Отмечаем задание как выполненное
+    psn_id_for_quest = user_profile.get('psn_id', '') if user_profile else ''
+    mark_quest_done(DB_PATH, user_id, psn_id_for_quest, 'hellmode')
     if not user_profile:
         raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
     
@@ -3721,6 +3735,16 @@ async def submit_top100_application(
             detail=f"Недопустимая категория. Разрешены: {', '.join(valid_categories)}"
         )
     
+    # Проверяем, не выполнено ли уже задание на этой неделе
+    quest_type_map = {'story': 'story', 'survival': 'survival', 'trials': 'trials'}
+    quest_type = quest_type_map.get(category)
+    
+    if quest_type and is_quest_done(DB_PATH, user_id, quest_type):
+        raise HTTPException(
+            status_code=400,
+            detail="Вы уже выполнили это задание на этой неделе"
+        )
+    
     # Получаем профиль пользователя для получения psn_id
     user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
     
@@ -3843,6 +3867,13 @@ async def approve_top100_application(
         raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
     
     psn_id = user_profile.get('psn_id', '')
+    
+    # Отмечаем задание как выполненное
+    quest_type_map = {'story': 'story', 'survival': 'survival', 'trials': 'trials'}
+    quest_type = quest_type_map.get(category)
+    
+    if quest_type:
+        mark_quest_done(DB_PATH, user_id, psn_id, quest_type)
     
     # Форматируем название категории
     category_name = format_top100_category_name(category)
