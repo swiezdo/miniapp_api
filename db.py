@@ -2423,3 +2423,61 @@ def get_user_quests_status(db_path: str, user_id: int) -> Optional[Dict[str, Any
         print(f"Ошибка получения статуса заданий: {e}")
         traceback.print_exc()
         return None
+
+
+def get_week_heroes(db_path: str, limit: int = 3) -> List[Dict[str, Any]]:
+    """
+    Получает список героев недели - пользователей с all_completed > 0.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        limit: Максимальное количество результатов
+    
+    Returns:
+        Список словарей с данными пользователей:
+        {
+            'user_id': int,
+            'psn_id': str,
+            'avatar_url': str,
+            'all_completed': int
+        }
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            cursor.execute('''
+                SELECT 
+                    qd.user_id,
+                    qd.all_completed,
+                    u.psn_id,
+                    u.avatar_url
+                FROM quests_done qd
+                LEFT JOIN users u ON qd.user_id = u.user_id
+                WHERE qd.all_completed > 0
+                ORDER BY qd.all_completed DESC
+                LIMIT ?
+            ''', (limit,))
+            
+            rows = cursor.fetchall()
+            
+            if not rows:
+                return []
+            
+            heroes = []
+            for row in rows:
+                user_id, all_completed, psn_id, avatar_url = row
+                heroes.append({
+                    'user_id': user_id,
+                    'psn_id': psn_id or '',
+                    'avatar_url': avatar_url or '',
+                    'all_completed': all_completed
+                })
+            
+            return heroes
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка получения героев недели: {e}")
+        traceback.print_exc()
+        return []

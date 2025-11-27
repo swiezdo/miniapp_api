@@ -2283,6 +2283,21 @@ async def get_upcoming_birthdays_feed(
     return {"birthdays": result}
 
 
+@app.get("/api/weekHeroes")
+async def get_week_heroes_feed(
+    limit: int = Query(3, ge=1, le=10),
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Возвращает список героев недели - пользователей с all_completed > 0.
+    """
+    from db import get_week_heroes
+    
+    heroes = get_week_heroes(DB_PATH, limit)
+    
+    return {"heroes": heroes}
+
+
 @app.post("/api/trophy.reject")
 async def reject_trophy_application(
     user_id: int = Form(...),
