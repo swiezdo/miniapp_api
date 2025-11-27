@@ -3119,6 +3119,12 @@ async def get_profile_preview(user_id: int):
         print(f"Ошибка загрузки конфига трофеев: {e}")
         trophy_config = None
     
+    try:
+        season_trophy_config = load_season_trophy_config()
+    except Exception as e:
+        print(f"Ошибка загрузки конфига сезонных трофеев: {e}")
+        season_trophy_config = []
+    
     # Формируем данные профиля для встраивания в HTML
     profile_data = {
         "user_id": user_id,
@@ -3358,6 +3364,26 @@ async def get_profile_preview(user_id: int):
         trophy_tiles.append(
             f'<div class="{' '.join(classes)}"><img src="{icon_path}" alt="{html.escape(str(trophy_name))}" /></div>'
         )
+    
+    # Добавляем сезонные трофеи
+    if season_trophy_config and isinstance(season_trophy_config, list):
+        for trophy in season_trophy_config:
+            key = trophy.get('key')
+            if not key:
+                continue
+            trophy_status = trophy.get('status', 'inactive')
+            is_obtained = key in earned_set
+            
+            # Показываем только активные или полученные сезонные трофеи
+            if trophy_status == 'active' or is_obtained:
+                trophy_name = trophy.get('name', key)
+                icon_path = f"{ASSETS_PREFIX}/trophies/{key}.svg"
+                classes = ["trophy-card"]
+                if not is_obtained:
+                    classes.append("trophy-card--locked")
+                trophy_tiles.append(
+                    f'<div class="{' '.join(classes)}"><img src="{icon_path}" alt="{html.escape(str(trophy_name))}" /></div>'
+                )
 
     if not trophy_tiles:
         trophy_tiles.append('<div class="mastery-empty">—</div>')
