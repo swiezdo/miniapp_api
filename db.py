@@ -2269,6 +2269,10 @@ def mark_quest_done(db_path: str, user_id: int, psn_id: str, quest_type: str) ->
             # Если все 4 задания выполнены И до обновления не все были выполнены
             if sum_after == 4 and sum_before < 4:
                 all_completed = all_completed + 1
+                
+                # Если достигли 5 недель подряд, выдаем трофей "Герой недели"
+                if all_completed == 5:
+                    add_trophy(db_path, user_id, 'week-hero')
             
             # Вставляем или обновляем запись
             cursor.execute('''
