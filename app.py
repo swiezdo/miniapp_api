@@ -3758,16 +3758,14 @@ def format_top100_category_name(category: str) -> str:
 
 @app.post("/api/top100.submit")
 async def submit_top100_application(
-    request: Request,
-    user_id: int = Depends(get_current_user)
+    user_id: int = Depends(get_current_user),
+    category: str = Form(...),
+    comment: Optional[str] = Form(default=None),
+    photos: Optional[List[UploadFile]] = File(default=None)
 ):
     """
     Отправляет заявку на ТОП-100 в админскую группу.
     """
-    body = await request.json()
-    category = body.get('category')
-    comment = body.get('comment')
-    
     # Валидация категории
     valid_categories = ['story', 'survival', 'trials']
     if category not in valid_categories:
@@ -3785,6 +3783,31 @@ async def submit_top100_application(
             status_code=400,
             detail="Вы уже выполнили это задание на этой неделе"
         )
+    
+    # Валидация файлов
+    media_files = photos or []
+
+    if len(media_files) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Необходимо прикрепить хотя бы один файл (изображение или видео)"
+        )
+    
+    if len(media_files) > MAX_MEDIA_ATTACHMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Можно прикрепить не более {MAX_MEDIA_ATTACHMENTS} файлов"
+        )
+    
+    normalized_media = []
+    for upload in media_files:
+        media_kind = detect_media_type(upload)
+        if media_kind not in {'photo', 'video'}:
+            raise HTTPException(
+                status_code=400,
+                detail="Разрешены только изображения и видео (MP4, MOV)."
+            )
+        normalized_media.append((upload, media_kind))
     
     # Получаем профиль пользователя для получения psn_id
     user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
@@ -3809,7 +3832,9 @@ async def submit_top100_application(
 📊 <b>Категория:</b> {category_name}
 💰 <b>Текущая награда:</b> {prize} 🪙
 
-💬 <b>Комментарий:</b> {comment_text}"""
+💬 <b>Комментарий:</b> {comment_text}
+
+📋 <b>Необходимо самостоятельно проверить список лидеров и убедиться что участник действительно находится в ТОП-100</b>"""
     
     # Создаем inline кнопки
     reply_markup = {
@@ -3841,26 +3866,72 @@ async def submit_top100_application(
     if not TROPHY_GROUP_TOPIC_ID:
         print(f"WARNING: TROPHY_GROUP_TOPIC_ID не установлен. Заявка будет отправлена без указания темы.")
     
-    # Отправляем сообщение в группу
+    # Обрабатываем и отправляем фотографии
     try:
-        await send_telegram_message(
-            bot_token=BOT_TOKEN,
-            chat_id=TROPHY_GROUP_CHAT_ID,
-            text=message_text,
-            reply_markup=reply_markup,
-            message_thread_id=int(TROPHY_GROUP_TOPIC_ID) if TROPHY_GROUP_TOPIC_ID else None
-        )
-        print(f"Заявка ТОП-100 успешно отправлена в группу: user_id={user_id}, category={category}")
+        with temp_image_directory(prefix='top100_app_') as temp_dir:
+            media_payload = []
+            
+            for index, (upload, media_kind) in enumerate(normalized_media, start=1):
+                if media_kind == 'photo':
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+
+                    photo_path = os.path.join(temp_dir, f'media_{index}.jpg')
+                    image = Image.open(upload.file)
+                    process_image_for_upload(image, photo_path)
+                    media_payload.append({
+                        "type": "photo",
+                        "path": photo_path,
+                    })
+
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+                else:
+                    extension = guess_media_extension(upload, default='.mp4')
+                    if not extension.startswith('.'):
+                        extension = f'.{extension}'
+
+                    video_path = os.path.join(temp_dir, f'media_{index}{extension}')
+                    save_upload_file(upload, video_path)
+                    media_payload.append({
+                        "type": "video",
+                        "path": video_path,
+                    })
+            
+            # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
+            try:
+                print(f"Отправка заявки ТОП-100 в группу: user_id={user_id}, "
+                      f"chat_id={TROPHY_GROUP_CHAT_ID}, topic_id={TROPHY_GROUP_TOPIC_ID}, "
+                      f"category={category}, media_count={len(media_payload)}")
+                
+                await send_media_to_telegram_group(
+                    bot_token=BOT_TOKEN,
+                    chat_id=TROPHY_GROUP_CHAT_ID,
+                    media_items=media_payload,
+                    message_text=message_text,
+                    reply_markup=reply_markup,
+                    message_thread_id=TROPHY_GROUP_TOPIC_ID
+                )
+                print(f"Заявка ТОП-100 успешно отправлена в группу: user_id={user_id}, category={category}")
+            except Exception as e:
+                print(f"ERROR: Ошибка отправки заявки ТОП-100 в группу: {e}")
+                print(f"  User ID: {user_id}, Category: {category}")
+                print(f"  Chat ID: {TROPHY_GROUP_CHAT_ID}, Topic ID: {TROPHY_GROUP_TOPIC_ID}")
+                traceback.print_exc()
+                
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Ошибка отправки заявки в группу модераторов: {str(e)}. "
+                           f"Попробуйте позже или обратитесь к администратору."
+                )
     except Exception as e:
-        print(f"ERROR: Ошибка отправки заявки ТОП-100 в группу: {e}")
-        print(f"  User ID: {user_id}, Category: {category}")
-        print(f"  Chat ID: {TROPHY_GROUP_CHAT_ID}, Topic ID: {TROPHY_GROUP_TOPIC_ID}")
-        traceback.print_exc()
-        
         raise HTTPException(
             status_code=500,
-            detail=f"Ошибка отправки заявки в группу модераторов: {str(e)}. "
-                   f"Попробуйте позже или обратитесь к администратору."
+            detail=f"Ошибка обработки изображений: {str(e)}"
         )
     
     return {
