@@ -3689,6 +3689,252 @@ async def get_top100_prize(user_id: int = Depends(get_current_user)):
         )
 
 
+def format_top100_category_name(category: str) -> str:
+    """
+    Форматирует название категории ТОП-100 для отображения.
+    """
+    category_map = {
+        'story': 'Сюжет',
+        'survival': 'Выживание',
+        'trials': 'Испытания Иё'
+    }
+    return category_map.get(category, category)
+
+
+@app.post("/api/top100.submit")
+async def submit_top100_application(
+    request: Request,
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Отправляет заявку на ТОП-100 в админскую группу.
+    """
+    body = await request.json()
+    category = body.get('category')
+    comment = body.get('comment')
+    
+    # Валидация категории
+    valid_categories = ['story', 'survival', 'trials']
+    if category not in valid_categories:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Недопустимая категория. Разрешены: {', '.join(valid_categories)}"
+        )
+    
+    # Получаем профиль пользователя для получения psn_id
+    user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
+    
+    # Получаем текущий приз
+    prize = get_top100_current_prize(DB_PATH)
+    if prize is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Не удалось получить текущее значение приза Top100"
+        )
+    
+    # Форматируем название категории
+    category_name = format_top100_category_name(category)
+    
+    # Формируем сообщение для группы
+    comment_text = comment.strip() if comment and comment.strip() else "Без комментария"
+    
+    message_text = f"""🏆 <b>Заявка ТОП-100 {category_name}</b>
+
+👤 <b>PSN ID:</b> {psn_id}
+📊 <b>Категория:</b> {category_name}
+💰 <b>Текущая награда:</b> {prize} 🪙
+
+💬 <b>Комментарий:</b> {comment_text}"""
+    
+    # Создаем inline кнопки
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "Одобрить",
+                    "callback_data": f"approve_top100:{user_id}:{category}"
+                },
+                {
+                    "text": "Отклонить",
+                    "callback_data": f"reject_top100:{user_id}:{category}"
+                }
+            ]
+        ]
+    }
+    
+    # Валидация переменных окружения
+    if not BOT_TOKEN:
+        raise HTTPException(
+            status_code=500,
+            detail="BOT_TOKEN не настроен. Обратитесь к администратору."
+        )
+    if not TROPHY_GROUP_CHAT_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="TROPHY_GROUP_CHAT_ID не настроен. Обратитесь к администратору."
+        )
+    if not TROPHY_GROUP_TOPIC_ID:
+        print(f"WARNING: TROPHY_GROUP_TOPIC_ID не установлен. Заявка будет отправлена без указания темы.")
+    
+    # Отправляем сообщение в группу
+    try:
+        await send_telegram_message(
+            bot_token=BOT_TOKEN,
+            chat_id=TROPHY_GROUP_CHAT_ID,
+            text=message_text,
+            reply_markup=reply_markup,
+            message_thread_id=int(TROPHY_GROUP_TOPIC_ID) if TROPHY_GROUP_TOPIC_ID else None
+        )
+        print(f"Заявка ТОП-100 успешно отправлена в группу: user_id={user_id}, category={category}")
+    except Exception as e:
+        print(f"ERROR: Ошибка отправки заявки ТОП-100 в группу: {e}")
+        print(f"  User ID: {user_id}, Category: {category}")
+        print(f"  Chat ID: {TROPHY_GROUP_CHAT_ID}, Topic ID: {TROPHY_GROUP_TOPIC_ID}")
+        traceback.print_exc()
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка отправки заявки в группу модераторов: {str(e)}. "
+                   f"Попробуйте позже или обратитесь к администратору."
+        )
+    
+    return {
+        "status": "ok",
+        "message": "Заявка успешно отправлена"
+    }
+
+
+@app.post("/api/top100.approve")
+async def approve_top100_application(
+    user_id: int = Form(...),
+    category: str = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Одобряет заявку на ТОП-100.
+    Вызывается ботом при нажатии кнопки "Одобрить".
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Валидация категории
+    valid_categories = ['story', 'survival', 'trials']
+    if category not in valid_categories:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Недопустимая категория. Разрешены: {', '.join(valid_categories)}"
+        )
+    
+    # Получаем текущий приз
+    prize = get_top100_current_prize(DB_PATH)
+    if prize is None or prize <= 0:
+        raise HTTPException(status_code=400, detail="Приз Top100 не указан или равен нулю")
+    
+    # Обновляем баланс пользователя
+    success = update_user_balance(DB_PATH, user_id, prize)
+    if not success:
+        raise HTTPException(status_code=500, detail="Ошибка обновления баланса в БД")
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    psn_id = user_profile.get('psn_id', '')
+    
+    # Форматируем название категории
+    category_name = format_top100_category_name(category)
+    
+    # Отправляем уведомление пользователю
+    try:
+        user_notification = f"""✅ <b>Ваша заявка ТОП-100 {category_name} была одобрена!</b>
+
+💰 <b>Награда:</b> +{prize} 🪙"""
+        
+        await send_telegram_message(
+            bot_token=BOT_TOKEN,
+            chat_id=str(user_id),
+            text=user_notification
+        )
+    except Exception as e:
+        print(f"ERROR approve_top100_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
+        traceback.print_exc()
+        # Не прерываем выполнение, так как баланс уже обновлен
+    
+    return {
+        "status": "ok",
+        "success": True,
+        "psn_id": psn_id,
+        "user_id": user_id,
+        "category": category,
+        "category_name": category_name,
+        "reward": prize
+    }
+
+
+@app.post("/api/top100.reject")
+async def reject_top100_application(
+    user_id: int = Form(...),
+    category: str = Form(...),
+    reason: str = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Отклоняет заявку на ТОП-100.
+    Вызывается ботом при нажатии кнопки "Отклонить".
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Валидация категории
+    valid_categories = ['story', 'survival', 'trials']
+    if category not in valid_categories:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Недопустимая категория. Разрешены: {', '.join(valid_categories)}"
+        )
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    psn_id = user_profile.get('psn_id', '')
+    
+    # Форматируем название категории
+    category_name = format_top100_category_name(category)
+    
+    # Отправляем уведомление пользователю
+    try:
+        user_notification = f"""❌ <b>К сожалению, ваша заявка ТОП-100 {category_name} была отклонена.</b>
+
+Категория: <b>{category_name}</b>
+
+Причина: {reason}"""
+        
+        await send_telegram_message(
+            bot_token=BOT_TOKEN,
+            chat_id=str(user_id),
+            text=user_notification
+        )
+    except Exception as e:
+        print(f"ERROR reject_top100_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
+        traceback.print_exc()
+    
+    return {
+        "status": "ok",
+        "success": True,
+        "psn_id": psn_id,
+        "user_id": user_id,
+        "category": category,
+        "category_name": category_name
+    }
+
+
 @app.post("/api/send_waves")
 async def send_waves_screenshot(
     chat_id: str = Query(..., description="ID чата для отправки фото"),
