@@ -60,6 +60,8 @@ from db import (
     mark_quest_done,
     reset_weekly_quests,
     get_notification_subscribers,
+    get_user_notifications,
+    toggle_notification,
 )
 from image_utils import (
     process_image_for_upload,
@@ -2329,6 +2331,71 @@ async def get_notification_subscribers_endpoint(
     subscribers = get_notification_subscribers(DB_PATH, notification_type)
     
     return {"subscribers": subscribers}
+
+
+@app.get("/api/notifications/user/{user_id}")
+async def get_user_notifications_endpoint(
+    user_id: int,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Возвращает настройки уведомлений пользователя.
+    Вызывается ботом для отображения текущих настроек.
+    
+    Args:
+        user_id: ID пользователя
+        authorization: Заголовок Authorization с BOT_TOKEN
+    
+    Returns:
+        Словарь с настройками уведомлений
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    notifications = get_user_notifications(DB_PATH, user_id)
+    
+    return {"notifications": notifications}
+
+
+@app.post("/api/notifications/user/{user_id}/toggle/{notification_type}")
+async def toggle_notification_endpoint(
+    user_id: int,
+    notification_type: str,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Переключает настройку уведомления пользователя (0 ↔ 1).
+    Вызывается ботом при нажатии на кнопку включения/выключения.
+    
+    Args:
+        user_id: ID пользователя
+        notification_type: Тип уведомления (check, speedrun, raid, ghost, hellmode, story, rivals, trials)
+        authorization: Заголовок Authorization с BOT_TOKEN
+    
+    Returns:
+        Новое значение настройки (0 или 1)
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    valid_types = {'check', 'speedrun', 'raid', 'ghost', 'hellmode', 'story', 'rivals', 'trials'}
+    if notification_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Недопустимый тип уведомления. Допустимые значения: {', '.join(sorted(valid_types))}"
+        )
+    
+    success = toggle_notification(DB_PATH, user_id, notification_type)
+    if not success:
+        raise HTTPException(status_code=500, detail="Ошибка при переключении уведомления")
+    
+    # Получаем новое значение
+    notifications = get_user_notifications(DB_PATH, user_id)
+    new_value = notifications.get(notification_type, 0)
+    
+    return {"value": new_value}
 
 
 @app.post("/api/trophy.reject")

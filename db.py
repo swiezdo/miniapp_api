@@ -2623,3 +2623,129 @@ def update_notifications_psn_id(db_path: str, user_id: int, psn_id: str) -> bool
         print(f"Ошибка обновления psn_id в уведомлениях: {e}")
         traceback.print_exc()
         return False
+
+
+def get_user_notifications(db_path: str, user_id: int) -> Dict[str, int]:
+    """
+    Получает все настройки уведомлений пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Словарь с настройками уведомлений:
+        {
+            'check': 0 или 1,
+            'speedrun': 0 или 1,
+            'raid': 0 или 1,
+            'ghost': 0 или 1,
+            'hellmode': 0 или 1,
+            'story': 0 или 1,
+            'rivals': 0 или 1,
+            'trials': 0 или 1
+        }
+        Если записи нет, возвращает все нули
+    """
+    default_notifications = {
+        'check': 0,
+        'speedrun': 0,
+        'raid': 0,
+        'ghost': 0,
+        'hellmode': 0,
+        'story': 0,
+        'rivals': 0,
+        'trials': 0
+    }
+    
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return default_notifications
+            
+            cursor.execute('''
+                SELECT [check], speedrun, raid, ghost, hellmode, story, rivals, trials
+                FROM notifications WHERE user_id = ?
+            ''', (user_id,))
+            
+            row = cursor.fetchone()
+            
+            if not row:
+                return default_notifications
+            
+            return {
+                'check': row[0],
+                'speedrun': row[1],
+                'raid': row[2],
+                'ghost': row[3],
+                'hellmode': row[4],
+                'story': row[5],
+                'rivals': row[6],
+                'trials': row[7]
+            }
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения настроек уведомлений: {e}")
+        traceback.print_exc()
+        return default_notifications
+
+
+def toggle_notification(db_path: str, user_id: int, notification_type: str) -> bool:
+    """
+    Переключает настройку уведомления пользователя (0 ↔ 1).
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        notification_type: Тип уведомления (check, speedrun, raid, ghost, hellmode, story, rivals, trials)
+    
+    Returns:
+        True при успешном переключении, иначе False
+    """
+    valid_types = {'check', 'speedrun', 'raid', 'ghost', 'hellmode', 'story', 'rivals', 'trials'}
+    if notification_type not in valid_types:
+        print(f"Ошибка: недопустимый тип уведомления: {notification_type}")
+        return False
+    
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Получаем текущее значение
+            field_name = f'[{notification_type}]' if notification_type == 'check' else notification_type
+            cursor.execute(f'''
+                SELECT {field_name} FROM notifications WHERE user_id = ?
+            ''', (user_id,))
+            
+            row = cursor.fetchone()
+            
+            if not row:
+                # Если записи нет, создаем её со всеми полями = 1, затем переключаем нужное
+                # Получаем psn_id из users
+                cursor.execute('SELECT psn_id FROM users WHERE user_id = ?', (user_id,))
+                user_row = cursor.fetchone()
+                psn_id = user_row[0] if user_row and user_row[0] else ''
+                
+                cursor.execute('''
+                    INSERT INTO notifications (user_id, psn_id, [check], speedrun, raid, ghost, hellmode, story, rivals, trials)
+                    VALUES (?, ?, 1, 1, 1, 1, 1, 1, 1, 1)
+                ''', (user_id, psn_id))
+                # Теперь переключаем на 0
+                new_value = 0
+            else:
+                # Переключаем значение (0 → 1, 1 → 0)
+                current_value = row[0]
+                new_value = 1 if current_value == 0 else 0
+            
+            # Обновляем значение
+            cursor.execute(f'''
+                UPDATE notifications SET {field_name} = ? WHERE user_id = ?
+            ''', (new_value, user_id))
+            
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка переключения уведомления: {e}")
+        traceback.print_exc()
+        return False
