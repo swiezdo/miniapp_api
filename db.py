@@ -391,6 +391,10 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
             cursor.execute('SELECT user_id FROM birthdays WHERE user_id = ?', (user_id,))
             birthdays_exists = cursor.fetchone() is not None
 
+            # Проверяем существует ли запись в notifications
+            cursor.execute('SELECT user_id FROM notifications WHERE user_id = ?', (user_id,))
+            notifications_exists = cursor.fetchone() is not None
+
             # Получаем avatar_url только если оно явно передано
             avatar_url = profile_data.get('avatar_url')
             
@@ -486,6 +490,19 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                 cursor.execute('''
                     UPDATE builds SET author = ? WHERE user_id = ?
                     ''', (psn_id, user_id))
+                
+                # Обновляем или создаем запись в notifications
+                if notifications_exists:
+                    # Обновляем psn_id в notifications если запись существует
+                    cursor.execute('''
+                        UPDATE notifications SET psn_id = ? WHERE user_id = ?
+                    ''', (psn_id, user_id))
+                else:
+                    # Создаем новую запись в notifications со всеми полями = 1
+                    cursor.execute('''
+                        INSERT INTO notifications (user_id, psn_id, [check], speedrun, raid, ghost, hellmode, story, rivals, trials)
+                        VALUES (?, ?, 1, 1, 1, 1, 1, 1, 1, 1)
+                    ''', (user_id, psn_id))
             else:
                 # INSERT нового пользователя
                 cursor.execute('''
@@ -526,6 +543,14 @@ def upsert_user(db_path: str, user_id: int, profile_data: Dict[str, Any]) -> boo
                         INSERT INTO birthdays (user_id, psn_id, birthday)
                         VALUES (?, ?, ?)
                     ''', (user_id, psn_id, birthday))
+                
+                # Автоматически создаём запись в notifications для нового пользователя со всеми полями = 1
+                if not notifications_exists:
+                    psn_id = profile_data.get('psn_id', '') or ''
+                    cursor.execute('''
+                        INSERT INTO notifications (user_id, psn_id, [check], speedrun, raid, ghost, hellmode, story, rivals, trials)
+                        VALUES (?, ?, 1, 1, 1, 1, 1, 1, 1, 1)
+                    ''', (user_id, psn_id))
             
             return True
         
@@ -2493,3 +2518,108 @@ def get_week_heroes(db_path: str, limit: int = 3) -> List[Dict[str, Any]]:
         print(f"Ошибка получения героев недели: {e}")
         traceback.print_exc()
         return []
+
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С УВЕДОМЛЕНИЯМИ ==========
+
+def get_notification_subscribers(db_path: str, notification_type: str) -> List[int]:
+    """
+    Получает список user_id пользователей, подписанных на указанный тип уведомлений.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        notification_type: Тип уведомления (check, speedrun, raid, ghost, hellmode, story, rivals, trials)
+    
+    Returns:
+        Список user_id пользователей, у которых соответствующее поле = 1
+    """
+    valid_types = {'check', 'speedrun', 'raid', 'ghost', 'hellmode', 'story', 'rivals', 'trials'}
+    if notification_type not in valid_types:
+        print(f"Ошибка: недопустимый тип уведомления: {notification_type}")
+        return []
+    
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            # Безопасный запрос с использованием whitelist
+            # Используем квадратные скобки для поля check, так как это зарезервированное слово
+            field_name = f'[{notification_type}]' if notification_type == 'check' else notification_type
+            cursor.execute(f'''
+                SELECT user_id FROM notifications
+                WHERE {field_name} = 1
+            ''', ())
+            
+            rows = cursor.fetchall()
+            return [row[0] for row in rows]
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка получения подписчиков на уведомления: {e}")
+        traceback.print_exc()
+        return []
+
+
+def init_user_notifications(db_path: str, user_id: int, psn_id: str) -> bool:
+    """
+    Создает запись в notifications для нового пользователя со всеми полями = 1.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        psn_id: PSN ID пользователя
+    
+    Returns:
+        True при успешном создании, иначе False
+    """
+    try:
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем существует ли запись
+            cursor.execute('SELECT user_id FROM notifications WHERE user_id = ?', (user_id,))
+            if cursor.fetchone() is not None:
+                return True  # Запись уже существует
+            
+            # Создаем новую запись со всеми полями = 1
+            cursor.execute('''
+                INSERT INTO notifications (user_id, psn_id, [check], speedrun, raid, ghost, hellmode, story, rivals, trials)
+                VALUES (?, ?, 1, 1, 1, 1, 1, 1, 1, 1)
+            ''', (user_id, psn_id or ''))
+            
+            return True
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка создания записи уведомлений: {e}")
+        traceback.print_exc()
+        return False
+
+
+def update_notifications_psn_id(db_path: str, user_id: int, psn_id: str) -> bool:
+    """
+    Обновляет psn_id в таблице notifications.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        psn_id: Новый PSN ID
+    
+    Returns:
+        True при успешном обновлении, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            cursor.execute('''
+                UPDATE notifications SET psn_id = ? WHERE user_id = ?
+            ''', (psn_id or '', user_id))
+            
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка обновления psn_id в уведомлениях: {e}")
+        traceback.print_exc()
+        return False

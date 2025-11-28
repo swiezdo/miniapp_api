@@ -59,6 +59,7 @@ from db import (
     is_quest_done,
     mark_quest_done,
     reset_weekly_quests,
+    get_notification_subscribers,
 )
 from image_utils import (
     process_image_for_upload,
@@ -2296,6 +2297,38 @@ async def get_week_heroes_feed(
     heroes = get_week_heroes(DB_PATH, limit)
     
     return {"heroes": heroes}
+
+
+@app.get("/api/notifications/{notification_type}")
+async def get_notification_subscribers_endpoint(
+    notification_type: str,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Возвращает список user_id пользователей, подписанных на указанный тип уведомлений.
+    Вызывается ботом для отправки уведомлений.
+    
+    Args:
+        notification_type: Тип уведомления (check, speedrun, raid, ghost, hellmode, story, rivals, trials)
+        authorization: Заголовок Authorization с BOT_TOKEN
+    
+    Returns:
+        Список user_id подписчиков
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    valid_types = {'check', 'speedrun', 'raid', 'ghost', 'hellmode', 'story', 'rivals', 'trials'}
+    if notification_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Недопустимый тип уведомления. Допустимые значения: {', '.join(sorted(valid_types))}"
+        )
+    
+    subscribers = get_notification_subscribers(DB_PATH, notification_type)
+    
+    return {"subscribers": subscribers}
 
 
 @app.post("/api/trophy.reject")
