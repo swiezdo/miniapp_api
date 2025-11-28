@@ -2186,9 +2186,9 @@ def update_hellmode_quest(
         return False
 
 
-def get_top100_current_prize(db_path: str) -> Optional[int]:
+def get_top50_current_prize(db_path: str) -> Optional[int]:
     """
-    Получает текущее значение приза Top100.
+    Получает текущее значение приза Top50.
     
     Args:
         db_path: Путь к файлу базы данных
@@ -2201,7 +2201,7 @@ def get_top100_current_prize(db_path: str) -> Optional[int]:
             if cursor is None:
                 return None
             
-            cursor.execute('SELECT value FROM top100_current_prize LIMIT 1')
+            cursor.execute('SELECT value FROM top50_current_prize LIMIT 1')
             row = cursor.fetchone()
             
             if row:
@@ -2209,14 +2209,14 @@ def get_top100_current_prize(db_path: str) -> Optional[int]:
             return None
             
     except sqlite3.Error as e:
-        print(f"Ошибка получения приза Top100: {e}")
+        print(f"Ошибка получения приза Top50: {e}")
         traceback.print_exc()
         return None
 
 
-def update_top100_current_prize(db_path: str, value: int) -> bool:
+def update_top50_current_prize(db_path: str, value: int) -> bool:
     """
-    Обновляет значение приза Top100.
+    Обновляет значение приза Top50.
     
     Args:
         db_path: Путь к файлу базы данных
@@ -2231,16 +2231,16 @@ def update_top100_current_prize(db_path: str, value: int) -> bool:
                 return False
             
             # Обновляем значение (в таблице всегда только одна запись)
-            cursor.execute('UPDATE top100_current_prize SET value = ?', (value,))
+            cursor.execute('UPDATE top50_current_prize SET value = ?', (value,))
             
             # Если запись не была обновлена (не существует), создаем новую
             if cursor.rowcount == 0:
-                cursor.execute('INSERT INTO top100_current_prize (value) VALUES (?)', (value,))
+                cursor.execute('INSERT INTO top50_current_prize (value) VALUES (?)', (value,))
             
             return True
             
     except sqlite3.Error as e:
-        print(f"Ошибка обновления приза Top100: {e}")
+        print(f"Ошибка обновления приза Top50: {e}")
         traceback.print_exc()
         return False
 

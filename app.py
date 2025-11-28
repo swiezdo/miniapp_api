@@ -48,7 +48,7 @@ from db import (
     update_active_trophies,
     delete_user_all_data,
     get_current_rotation_week,
-    get_top100_current_prize,
+    get_top50_current_prize,
     update_rotation_week,
     log_recent_event,
     get_recent_events,
@@ -3819,15 +3819,15 @@ async def send_profile_screenshot(
         )
 
 
-@app.get("/api/top100.prize")
-async def get_top100_prize(user_id: int = Depends(get_current_user)):
+@app.get("/api/top50.prize")
+async def get_top50_prize(user_id: int = Depends(get_current_user)):
     """
-    Получить текущее значение приза Top100.
+    Получить текущее значение приза Top50.
     """
     try:
-        prize = get_top100_current_prize(DB_PATH)
+        prize = get_top50_current_prize(DB_PATH)
         if prize is None:
-            raise HTTPException(status_code=500, detail="Не удалось получить значение приза Top100")
+            raise HTTPException(status_code=500, detail="Не удалось получить значение приза Top50")
         
         return {
             "status": "ok",
@@ -3836,17 +3836,17 @@ async def get_top100_prize(user_id: int = Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Ошибка при получении приза Top100: {e}")
+        print(f"Ошибка при получении приза Top50: {e}")
         traceback.print_exc()
         raise HTTPException(
             status_code=500,
-            detail=f"Ошибка при получении приза Top100: {str(e)}"
+            detail=f"Ошибка при получении приза Top50: {str(e)}"
         )
 
 
-def format_top100_category_name(category: str) -> str:
+def format_top50_category_name(category: str) -> str:
     """
-    Форматирует название категории ТОП-100 для отображения.
+    Форматирует название категории ТОП-50 для отображения.
     """
     category_map = {
         'story': 'Сюжет',
@@ -3856,15 +3856,15 @@ def format_top100_category_name(category: str) -> str:
     return category_map.get(category, category)
 
 
-@app.post("/api/top100.submit")
-async def submit_top100_application(
+@app.post("/api/top50.submit")
+async def submit_top50_application(
     user_id: int = Depends(get_current_user),
     category: str = Form(...),
     comment: Optional[str] = Form(default=None),
     photos: Optional[List[UploadFile]] = File(default=None)
 ):
     """
-    Отправляет заявку на ТОП-100 в админскую группу.
+    Отправляет заявку на ТОП-50 в админскую группу.
     """
     # Валидация категории
     valid_categories = ['story', 'survival', 'trials']
@@ -3913,20 +3913,20 @@ async def submit_top100_application(
     user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
     
     # Получаем текущий приз
-    prize = get_top100_current_prize(DB_PATH)
+    prize = get_top50_current_prize(DB_PATH)
     if prize is None:
         raise HTTPException(
             status_code=500,
-            detail="Не удалось получить текущее значение приза Top100"
+            detail="Не удалось получить текущее значение приза Top50"
         )
     
     # Форматируем название категории
-    category_name = format_top100_category_name(category)
+    category_name = format_top50_category_name(category)
     
     # Формируем сообщение для группы
     comment_text = comment.strip() if comment and comment.strip() else "Без комментария"
     
-    message_text = f"""🏆 <b>Заявка ТОП-100 {category_name}</b>
+    message_text = f"""🏆 <b>Заявка ТОП-50 {category_name}</b>
 
 👤 <b>PSN ID:</b> {psn_id}
 📊 <b>Категория:</b> {category_name}
@@ -3934,7 +3934,7 @@ async def submit_top100_application(
 
 💬 <b>Комментарий:</b> {comment_text}
 
-📋 <b>Необходимо самостоятельно проверить список лидеров и убедиться что участник действительно находится в ТОП-100</b>"""
+📋 <b>Необходимо самостоятельно проверить список лидеров и убедиться что участник действительно находится в ТОП-50</b>"""
     
     # Создаем inline кнопки
     reply_markup = {
@@ -3942,11 +3942,11 @@ async def submit_top100_application(
             [
                 {
                     "text": "Одобрить",
-                    "callback_data": f"approve_top100:{user_id}:{category}"
+                    "callback_data": f"approve_top50:{user_id}:{category}"
                 },
                 {
                     "text": "Отклонить",
-                    "callback_data": f"reject_top100:{user_id}:{category}"
+                    "callback_data": f"reject_top50:{user_id}:{category}"
                 }
             ]
         ]
@@ -3968,7 +3968,7 @@ async def submit_top100_application(
     
     # Обрабатываем и отправляем фотографии
     try:
-        with temp_image_directory(prefix='top100_app_') as temp_dir:
+        with temp_image_directory(prefix='top50_app_') as temp_dir:
             media_payload = []
             
             for index, (upload, media_kind) in enumerate(normalized_media, start=1):
@@ -4004,7 +4004,7 @@ async def submit_top100_application(
             
             # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
             try:
-                print(f"Отправка заявки ТОП-100 в группу: user_id={user_id}, "
+                print(f"Отправка заявки ТОП-50 в группу: user_id={user_id}, "
                       f"chat_id={TROPHY_GROUP_CHAT_ID}, topic_id={TROPHY_GROUP_TOPIC_ID}, "
                       f"category={category}, media_count={len(media_payload)}")
                 
@@ -4016,9 +4016,9 @@ async def submit_top100_application(
                     reply_markup=reply_markup,
                     message_thread_id=TROPHY_GROUP_TOPIC_ID
                 )
-                print(f"Заявка ТОП-100 успешно отправлена в группу: user_id={user_id}, category={category}")
+                print(f"Заявка ТОП-50 успешно отправлена в группу: user_id={user_id}, category={category}")
             except Exception as e:
-                print(f"ERROR: Ошибка отправки заявки ТОП-100 в группу: {e}")
+                print(f"ERROR: Ошибка отправки заявки ТОП-50 в группу: {e}")
                 print(f"  User ID: {user_id}, Category: {category}")
                 print(f"  Chat ID: {TROPHY_GROUP_CHAT_ID}, Topic ID: {TROPHY_GROUP_TOPIC_ID}")
                 traceback.print_exc()
@@ -4040,15 +4040,15 @@ async def submit_top100_application(
     }
 
 
-@app.post("/api/top100.approve")
-async def approve_top100_application(
+@app.post("/api/top50.approve")
+async def approve_top50_application(
     user_id: int = Form(...),
     category: str = Form(...),
     moderator_username: str = Form(...),
     authorization: Optional[str] = Header(None)
 ):
     """
-    Одобряет заявку на ТОП-100.
+    Одобряет заявку на ТОП-50.
     Вызывается ботом при нажатии кнопки "Одобрить".
     """
     # Проверка авторизации бота
@@ -4064,9 +4064,9 @@ async def approve_top100_application(
         )
     
     # Получаем текущий приз
-    prize = get_top100_current_prize(DB_PATH)
+    prize = get_top50_current_prize(DB_PATH)
     if prize is None or prize <= 0:
-        raise HTTPException(status_code=400, detail="Приз Top100 не указан или равен нулю")
+        raise HTTPException(status_code=400, detail="Приз Top50 не указан или равен нулю")
     
     # Обновляем баланс пользователя
     success = update_user_balance(DB_PATH, user_id, prize)
@@ -4088,11 +4088,11 @@ async def approve_top100_application(
         mark_quest_done(DB_PATH, user_id, psn_id, quest_type)
     
     # Форматируем название категории
-    category_name = format_top100_category_name(category)
+    category_name = format_top50_category_name(category)
     
     # Отправляем уведомление пользователю
     try:
-        user_notification = f"""✅ <b>Ваша заявка ТОП-100 {category_name} была одобрена!</b>
+        user_notification = f"""✅ <b>Ваша заявка ТОП-50 {category_name} была одобрена!</b>
 
 💰 <b>Награда:</b> +{prize} 🪙"""
         
@@ -4102,7 +4102,7 @@ async def approve_top100_application(
             text=user_notification
         )
     except Exception as e:
-        print(f"ERROR approve_top100_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
+        print(f"ERROR approve_top50_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
         traceback.print_exc()
         # Не прерываем выполнение, так как баланс уже обновлен
     
@@ -4117,8 +4117,8 @@ async def approve_top100_application(
     }
 
 
-@app.post("/api/top100.reject")
-async def reject_top100_application(
+@app.post("/api/top50.reject")
+async def reject_top50_application(
     user_id: int = Form(...),
     category: str = Form(...),
     reason: str = Form(...),
@@ -4126,7 +4126,7 @@ async def reject_top100_application(
     authorization: Optional[str] = Header(None)
 ):
     """
-    Отклоняет заявку на ТОП-100.
+    Отклоняет заявку на ТОП-50.
     Вызывается ботом при нажатии кнопки "Отклонить".
     """
     # Проверка авторизации бота
@@ -4149,11 +4149,11 @@ async def reject_top100_application(
     psn_id = user_profile.get('psn_id', '')
     
     # Форматируем название категории
-    category_name = format_top100_category_name(category)
+    category_name = format_top50_category_name(category)
     
     # Отправляем уведомление пользователю
     try:
-        user_notification = f"""❌ <b>К сожалению, ваша заявка ТОП-100 {category_name} была отклонена.</b>
+        user_notification = f"""❌ <b>К сожалению, ваша заявка ТОП-50 {category_name} была отклонена.</b>
 
 Категория: <b>{category_name}</b>
 
@@ -4165,7 +4165,7 @@ async def reject_top100_application(
             text=user_notification
         )
     except Exception as e:
-        print(f"ERROR reject_top100_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
+        print(f"ERROR reject_top50_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
         traceback.print_exc()
     
     return {
