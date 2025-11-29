@@ -533,7 +533,27 @@ async def get_user_profile(
         JSON с данными профиля или 404 если профиль не найден
     """
     profile = get_user(DB_PATH, target_user_id)
-    return format_profile_response(profile, target_user_id)
+    
+    # Получаем username через Telegram API
+    username = None
+    try:
+        result = await get_chat_member(
+            bot_token=BOT_TOKEN,
+            chat_id=GROUP_ID,
+            user_id=target_user_id
+        )
+        
+        if result.get('ok') and result.get('result'):
+            chat_member = result.get('result', {})
+            user_info = chat_member.get('user', {})
+            username = user_info.get('username')
+    except Exception as e:
+        # Логируем ошибку, но не прерываем выполнение
+        print(f"Ошибка получения username для user_id={target_user_id}: {e}")
+    
+    response = format_profile_response(profile, target_user_id)
+    response["username"] = username
+    return response
 
 
 @app.get("/api/user.checkGroupMembership")
