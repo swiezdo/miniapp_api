@@ -62,6 +62,7 @@ from db import (
     get_notification_subscribers,
     get_user_notifications,
     toggle_notification,
+    save_feedback_message,
 )
 from image_utils import (
     process_image_for_upload,
@@ -1655,6 +1656,8 @@ async def submit_feedback(
 
 💬 <b>Описание:</b>
 {description.strip()}
+
+💡 <i>Ответьте на это сообщение, чтобы отправить ответ пользователю в личку</i>
 """
     
     # Обрабатываем и отправляем медиафайлы
@@ -1696,23 +1699,42 @@ async def submit_feedback(
                 
                 # Отправляем уведомление в группу БЕЗ message_thread_id (в основную тему)
                 try:
-                    await send_media_to_telegram_group(
+                    result = await send_media_to_telegram_group(
                         bot_token=BOT_TOKEN,
                         chat_id=TROPHY_GROUP_CHAT_ID,
                         media_items=media_payload,
                         message_text=message_text
                     )
+                    # Извлекаем message_id из результата
+                    # send_media_to_telegram_group возвращает результат последнего сообщения (с текстом)
+                    if result and result.get('ok') and result.get('result'):
+                        result_data = result['result']
+                        if isinstance(result_data, dict):
+                            # Если результат - одно сообщение (текстовое сообщение после медиагруппы)
+                            group_message_id = result_data.get('message_id')
+                            if group_message_id:
+                                save_feedback_message(DB_PATH, user_id, group_message_id)
+                        elif isinstance(result_data, list) and len(result_data) > 0:
+                            # Если результат - массив (медиагруппа), берем message_id первого сообщения
+                            group_message_id = result_data[0].get('message_id')
+                            if group_message_id:
+                                save_feedback_message(DB_PATH, user_id, group_message_id)
                 except Exception as e:
                     print(f"Ошибка отправки отзыва в группу: {e}")
                     # Не прерываем выполнение, но логируем ошибку
         else:
             # Если нет медиафайлов, отправляем просто текстовое сообщение
             try:
-                await send_telegram_message(
+                result = await send_telegram_message(
                     bot_token=BOT_TOKEN,
                     chat_id=TROPHY_GROUP_CHAT_ID,
                     text=message_text
                 )
+                # Извлекаем message_id из результата
+                if result and result.get('ok') and result.get('result'):
+                    group_message_id = result['result'].get('message_id')
+                    if group_message_id:
+                        save_feedback_message(DB_PATH, user_id, group_message_id)
             except Exception as e:
                 print(f"Ошибка отправки отзыва в группу: {e}")
                 # Не прерываем выполнение, но логируем ошибку
@@ -1725,6 +1747,45 @@ async def submit_feedback(
     return {
         "status": "ok",
         "message": "Отзыв успешно отправлен"
+    }
+
+
+@app.get("/api/feedback.getUserByMessageId")
+async def get_feedback_user_by_message_id(
+    group_message_id: int = Query(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Получает user_id по group_message_id для баг-репорта.
+    Используется ботом для обработки reply на баг-репорты.
+    Бот должен передать BOT_TOKEN в заголовке Authorization.
+    
+    Args:
+        group_message_id: ID сообщения в группе
+        authorization: Заголовок Authorization с токеном бота
+    
+    Returns:
+        JSON с user_id или 404 если не найдено
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(
+            status_code=401,
+            detail="Неавторизованный запрос"
+        )
+    
+    from db import get_feedback_message_by_group_id
+    
+    target_user_id = get_feedback_message_by_group_id(DB_PATH, group_message_id)
+    
+    if target_user_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Сообщение не найдено в базе данных"
+        )
+    
+    return {
+        "user_id": target_user_id
     }
 
 

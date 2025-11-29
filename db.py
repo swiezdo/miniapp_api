@@ -2749,3 +2749,65 @@ def toggle_notification(db_path: str, user_id: int, notification_type: str) -> b
         print(f"Ошибка переключения уведомления: {e}")
         traceback.print_exc()
         return False
+
+
+def save_feedback_message(db_path: str, user_id: int, group_message_id: int) -> bool:
+    """
+    Сохраняет связь между user_id и group_message_id для баг-репорта.
+    
+    Args:
+        db_path: Путь к базе данных
+        user_id: ID пользователя, отправившего баг-репорт через приложение
+        group_message_id: ID сообщения бота в группе с баг-репортом
+    
+    Returns:
+        True при успешном сохранении, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            cursor.execute("""
+                INSERT OR REPLACE INTO feedback_messages (user_id, group_message_id)
+                VALUES (?, ?)
+            """, (user_id, group_message_id))
+            
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка сохранения feedback_message: {e}")
+        return False
+
+
+def get_feedback_message_by_group_id(db_path: str, group_message_id: int) -> Optional[int]:
+    """
+    Получает user_id по group_message_id из таблицы feedback_messages.
+    
+    Args:
+        db_path: Путь к базе данных
+        group_message_id: ID сообщения бота в группе
+    
+    Returns:
+        user_id если найдено, иначе None
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute("""
+                SELECT user_id FROM feedback_messages 
+                WHERE group_message_id = ?
+            """, (group_message_id,))
+            
+            row = cursor.fetchone()
+            
+            if row:
+                return row[0]
+            
+            return None
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения feedback_message: {e}")
+        return None
