@@ -2811,3 +2811,32 @@ def get_feedback_message_by_group_id(db_path: str, group_message_id: int) -> Opt
     except sqlite3.Error as e:
         print(f"Ошибка получения feedback_message: {e}")
         return None
+
+
+def delete_feedback_message(db_path: str, group_message_id: int) -> bool:
+    """
+    Удаляет запись из таблицы feedback_messages по group_message_id.
+    
+    Args:
+        db_path: Путь к базе данных
+        group_message_id: ID сообщения бота в группе
+    
+    Returns:
+        True при успешном удалении, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            cursor.execute("""
+                DELETE FROM feedback_messages 
+                WHERE group_message_id = ?
+            """, (group_message_id,))
+            
+            return cursor.rowcount > 0
+    
+    except sqlite3.Error as e:
+        print(f"Ошибка удаления feedback_message: {e}")
+        traceback.print_exc()
+        return False

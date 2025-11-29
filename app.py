@@ -1789,6 +1789,46 @@ async def get_feedback_user_by_message_id(
     }
 
 
+@app.delete("/api/feedback.deleteByMessageId")
+async def delete_feedback_by_message_id(
+    group_message_id: int = Query(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Удаляет запись из таблицы feedback_messages по group_message_id.
+    Используется ботом после обработки reply на баг-репорты.
+    Бот должен передать BOT_TOKEN в заголовке Authorization.
+    
+    Args:
+        group_message_id: ID сообщения в группе
+        authorization: Заголовок Authorization с токеном бота
+    
+    Returns:
+        JSON с результатом удаления
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(
+            status_code=401,
+            detail="Неавторизованный запрос"
+        )
+    
+    from db import delete_feedback_message
+    
+    success = delete_feedback_message(DB_PATH, group_message_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Запись не найдена в базе данных"
+        )
+    
+    return {
+        "success": True,
+        "message": "Запись успешно удалена"
+    }
+
+
 # Удалён эндпоинт отклонения трофея
 
 
