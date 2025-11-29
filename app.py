@@ -73,7 +73,7 @@ from image_utils import (
     guess_media_extension,
     save_upload_file,
 )
-from telegram_utils import send_telegram_message, send_media_to_telegram_group, get_chat_member
+from telegram_utils import send_telegram_message, send_media_to_telegram_group, get_chat_member, send_telegram_single_media
 from user_utils import get_user_with_psn, format_profile_response
 from mastery_utils import find_category_by_key, parse_tags
 from mastery_config import load_mastery_config
@@ -2174,14 +2174,15 @@ async def approve_mastery_application(
         user_notification = f"""✅ <b>Ваша заявка на повышение уровня мастерства была одобрена!</b>
 
 Категория: <b>{category_name}</b>
-Запрашиваемый уровень: Уровень {next_level} — {level_name}
 
 📊 <b>Текущий уровень:</b> Уровень {next_level} — {level_name}"""
         
-        await send_telegram_message(
+        await send_telegram_single_media(
             bot_token=BOT_TOKEN,
             chat_id=str(user_id),
-            text=user_notification
+            media_type='photo',
+            media_path='/root/gyozenbot/src/banner.png',
+            caption=user_notification
         )
     except Exception as e:
         print(f"ERROR approve_mastery_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
@@ -2278,22 +2279,20 @@ async def approve_trophy_application(
     username = user_profile.get('real_name', '')
     avatar_url = user_profile.get('avatar_url', '')
     
-    # Определяем тип трофея для уведомления
-    is_season = find_season_trophy_by_key(trophy_key) is not None
-    trophy_type_text = "сезонного трофея" if is_season else "трофея"
-    
     # Отправляем уведомление пользователю в личку
     try:
-        user_notification = f"""✅ <b>Ваша заявка на получение {trophy_type_text} была одобрена!</b>
+        user_notification = f"""✅ <b>Ваша заявка на получение трофея была одобрена!</b>
 
 🏅 <b>Трофей:</b> {trophy_name}
 
 Теперь этот трофей доступен в вашей коллекции на странице "Награды"."""
         
-        await send_telegram_message(
+        await send_telegram_single_media(
             bot_token=BOT_TOKEN,
             chat_id=str(user_id),
-            text=user_notification
+            media_type='photo',
+            media_path='/root/gyozenbot/src/banner.png',
+            caption=user_notification
         )
     except Exception as e:
         print(f"ERROR approve_trophy_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
@@ -2570,10 +2569,12 @@ async def reject_trophy_application(
 
 Причина: {reason}"""
         
-        await send_telegram_message(
+        await send_telegram_single_media(
             bot_token=BOT_TOKEN,
             chat_id=str(user_id),
-            text=user_notification
+            media_type='photo',
+            media_path='/root/gyozenbot/src/banner.png',
+            caption=user_notification
         )
     except Exception as e:
         print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
@@ -2653,7 +2654,7 @@ async def submit_hellmode_quest_application(
 ⚔️ <b>Класс:</b> {class_name}
 🛡️ <b>Орудие:</b> {gear_name}
 😊 <b>Эмоция:</b> {emote_name}
-💰 <b>Награда:</b> {reward} 🪙
+💰 <b>Награда:</b> {reward} Магатама
 
 💬 <b>Комментарий:</b> {comment_text}"""
     
@@ -2813,15 +2814,17 @@ async def approve_hellmode_quest_application(
 
 🗺️ <b>Карта:</b> {map_name}
 ⚔️ <b>Класс:</b> {class_name}
-🛡️ <b>Орудие:</b> {gear_name}
+💣 <b>Орудие:</b> {gear_name}
 😊 <b>Эмоция:</b> {emote_name}
 
-💰 <b>Награда:</b> +{reward} 🪙"""
+💰 <b>Награда:</b> +{reward} Магатама"""
         
-        await send_telegram_message(
+        await send_telegram_single_media(
             bot_token=BOT_TOKEN,
             chat_id=str(user_id),
-            text=user_notification
+            media_type='photo',
+            media_path='/root/gyozenbot/src/banner.png',
+            caption=user_notification
         )
     except Exception as e:
         print(f"ERROR approve_hellmode_quest_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
@@ -2867,6 +2870,7 @@ async def reject_hellmode_quest_application(
     class_name = quest.get('class_name', '') if quest else ''
     gear_name = quest.get('gear_name', '') if quest else ''
     emote_name = quest.get('emote_name', '') if quest else ''
+    reward = quest.get('reward', 0) if quest else 0
     
     # Отправляем уведомление пользователю в личку
     try:
@@ -2874,15 +2878,19 @@ async def reject_hellmode_quest_application(
 
 🗺️ <b>Карта:</b> {map_name}
 ⚔️ <b>Класс:</b> {class_name}
-🛡️ <b>Орудие:</b> {gear_name}
+💣 <b>Орудие:</b> {gear_name}
 😊 <b>Эмоция:</b> {emote_name}
+
+💰 Награда: {reward} Магатама
 
 Причина: {reason}"""
         
-        await send_telegram_message(
+        await send_telegram_single_media(
             bot_token=BOT_TOKEN,
             chat_id=str(user_id),
-            text=user_notification
+            media_type='photo',
+            media_path='/root/gyozenbot/src/banner.png',
+            caption=user_notification
         )
     except Exception as e:
         print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
@@ -2942,10 +2950,12 @@ async def reject_mastery_application(
 
 Причина: {reason}"""
         
-        await send_telegram_message(
+        await send_telegram_single_media(
             bot_token=BOT_TOKEN,
             chat_id=str(user_id),
-            text=user_notification
+            media_type='photo',
+            media_path='/root/gyozenbot/src/banner.png',
+            caption=user_notification
         )
     except Exception as e:
         print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
@@ -4058,7 +4068,7 @@ async def submit_top50_application(
 
 👤 <b>PSN ID:</b> {psn_id}
 📊 <b>Категория:</b> {category_name}
-💰 <b>Текущая награда:</b> {prize} 🪙
+💰 <b>Текущая награда:</b> {prize} Магатама
 
 💬 <b>Комментарий:</b> {comment_text}
 
@@ -4222,12 +4232,14 @@ async def approve_top50_application(
     try:
         user_notification = f"""✅ <b>Ваша заявка ТОП-50 {category_name} была одобрена!</b>
 
-💰 <b>Награда:</b> +{prize} 🪙"""
+💰 <b>Награда:</b> +{prize} Магатама"""
         
-        await send_telegram_message(
+        await send_telegram_single_media(
             bot_token=BOT_TOKEN,
             chat_id=str(user_id),
-            text=user_notification
+            media_type='photo',
+            media_path='/root/gyozenbot/src/banner.png',
+            caption=user_notification
         )
     except Exception as e:
         print(f"ERROR approve_top50_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
@@ -4279,11 +4291,16 @@ async def reject_top50_application(
     # Форматируем название категории
     category_name = format_top50_category_name(category)
     
+    # Получаем текущий приз для уведомления
+    prize = get_top50_current_prize(DB_PATH)
+    prize_text = f"{prize}" if prize else "0"
+    
     # Отправляем уведомление пользователю
     try:
         user_notification = f"""❌ <b>К сожалению, ваша заявка ТОП-50 {category_name} была отклонена.</b>
 
 Категория: <b>{category_name}</b>
+💰 Награда: {prize_text} Магатама
 
 Причина: {reason}"""
         
