@@ -472,6 +472,29 @@ async def get_users_list(user_id: int = Depends(get_current_user)):
                     builds_count = 0
             u['builds_count'] = builds_count
             u['has_public_builds'] = builds_count > 0
+            
+            # ПРОФИЛЬНЫЕ ДАННЫЕ для фильтрации
+            # Получаем полный профиль пользователя для извлечения platforms, modes, goals, difficulties
+            try:
+                user_profile = get_user(DB_PATH, uid) if uid else None
+                if user_profile:
+                    # Убеждаемся, что данные - это списки, а не None или другие типы
+                    u['platforms'] = user_profile.get('platforms') if isinstance(user_profile.get('platforms'), list) else []
+                    u['modes'] = user_profile.get('modes') if isinstance(user_profile.get('modes'), list) else []
+                    u['goals'] = user_profile.get('goals') if isinstance(user_profile.get('goals'), list) else []
+                    u['difficulties'] = user_profile.get('difficulties') if isinstance(user_profile.get('difficulties'), list) else []
+                else:
+                    u['platforms'] = []
+                    u['modes'] = []
+                    u['goals'] = []
+                    u['difficulties'] = []
+            except Exception as e:
+                # В случае ошибки устанавливаем пустые массивы
+                print(f"Ошибка получения профиля для user_id={uid}: {e}")
+                u['platforms'] = []
+                u['modes'] = []
+                u['goals'] = []
+                u['difficulties'] = []
     
     except Exception as e:
         print(f"Ошибка формирования расширенных полей users.list: {e}")
@@ -480,6 +503,10 @@ async def get_users_list(user_id: int = Depends(get_current_user)):
             u['active_trophies'] = u.get('active_trophies', [])
             u['trophies_count'] = u.get('trophies_count', 0)
             u['active_trophies_count'] = u.get('active_trophies_count', 0)
+            u['platforms'] = u.get('platforms', [])
+            u['modes'] = u.get('modes', [])
+            u['goals'] = u.get('goals', [])
+            u['difficulties'] = u.get('difficulties', [])
             u['has_any_trophy'] = u.get('has_any_trophy', False)
             u['has_mastery_progress'] = u.get('has_mastery_progress', False)
             u['builds_count'] = u.get('builds_count', 0)
