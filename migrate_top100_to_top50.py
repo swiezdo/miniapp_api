@@ -96,3 +96,5 @@ if __name__ == "__main__":
     print("Запуск миграции таблицы top100_current_prize → top50_current_prize...")
     migrate_top100_to_top50()
 
+
+
