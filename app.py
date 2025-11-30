@@ -4490,27 +4490,22 @@ async def create_snippet_endpoint(
     try:
         # Валидация триггера
         if not trigger or not trigger.strip():
-            print(f"Ошибка: триггер пустой. trigger={trigger}")
             raise HTTPException(status_code=400, detail="Триггер не может быть пустым")
         
         trigger = trigger.strip().lower()
         
         # Проверка уникальности триггера
         if check_trigger_exists(DB_PATH, trigger):
-            print(f"Ошибка: триггер уже существует. trigger={trigger}")
             raise HTTPException(status_code=400, detail="Сниппет с таким триггером уже существует")
         
         # Валидация сообщения
         if not message or not message.strip():
-            print(f"Ошибка: сообщение пустое. message={message}, message_type={type(message)}")
             raise HTTPException(status_code=400, detail="Сообщение не может быть пустым")
         
         # Валидация media_type
         if media and media_type not in ('photo', 'video'):
-            print(f"Ошибка: недопустимый тип медиа. media_type={media_type}")
             raise HTTPException(status_code=400, detail="Недопустимый тип медиа")
         
-        print(f"Создание сниппета: user_id={user_id}, trigger={trigger}, message_len={len(message)}, entities_json={entities_json}")
         snippet_id = create_snippet(DB_PATH, user_id, trigger, message, media, media_type, entities_json)
         
         if not snippet_id:
