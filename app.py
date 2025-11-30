@@ -4448,6 +4448,26 @@ async def get_my_snippets_endpoint(
         raise HTTPException(status_code=500, detail=f"Ошибка получения сниппетов: {str(e)}")
 
 
+@app.get("/api/snippets/check-trigger")
+async def check_trigger_endpoint(
+    trigger: str,
+    exclude_snippet_id: Optional[int] = None,
+    use_bot_token: Optional[str] = Query(None)
+):
+    """
+    Проверяет, существует ли сниппет с таким триггером.
+    """
+    try:
+        trigger = trigger.strip().lower()
+        exists = check_trigger_exists(DB_PATH, trigger, exclude_snippet_id=exclude_snippet_id)
+        return {
+            "exists": exists,
+            "trigger": trigger
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка проверки триггера: {str(e)}")
+
+
 @app.get("/api/snippets/{snippet_id}")
 async def get_snippet_by_id_endpoint(snippet_id: int):
     """
