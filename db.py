@@ -2860,7 +2860,7 @@ def get_all_snippets(db_path: str) -> List[Dict[str, Any]]:
                 return []
             
             cursor.execute('''
-                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at
+                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at, entities_json
                 FROM snippets
                 ORDER BY created_at DESC
             ''')
@@ -2875,7 +2875,8 @@ def get_all_snippets(db_path: str) -> List[Dict[str, Any]]:
                     'message': row[3],
                     'media': row[4],
                     'media_type': row[5],
-                    'created_at': row[6]
+                    'created_at': row[6],
+                    'entities_json': row[7] if len(row) > 7 else None
                 })
             
             return snippets
@@ -2903,7 +2904,7 @@ def get_user_snippets(db_path: str, user_id: int) -> List[Dict[str, Any]]:
                 return []
             
             cursor.execute('''
-                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at
+                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at, entities_json
                 FROM snippets
                 WHERE user_id = ?
                 ORDER BY created_at DESC
@@ -2919,7 +2920,8 @@ def get_user_snippets(db_path: str, user_id: int) -> List[Dict[str, Any]]:
                     'message': row[3],
                     'media': row[4],
                     'media_type': row[5],
-                    'created_at': row[6]
+                    'created_at': row[6],
+                    'entities_json': row[7] if len(row) > 7 else None
                 })
             
             return snippets
@@ -2947,7 +2949,7 @@ def get_snippet_by_trigger(db_path: str, trigger: str) -> Optional[Dict[str, Any
                 return None
             
             cursor.execute('''
-                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at
+                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at, entities_json
                 FROM snippets
                 WHERE trigger = ?
             ''', (trigger,))
@@ -2963,7 +2965,8 @@ def get_snippet_by_trigger(db_path: str, trigger: str) -> Optional[Dict[str, Any
                 'message': row[3],
                 'media': row[4],
                 'media_type': row[5],
-                'created_at': row[6]
+                'created_at': row[6],
+                'entities_json': row[7] if len(row) > 7 else None
             }
         
     except sqlite3.Error as e:
@@ -2989,7 +2992,7 @@ def get_snippet_by_id(db_path: str, snippet_id: int) -> Optional[Dict[str, Any]]
                 return None
             
             cursor.execute('''
-                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at
+                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at, entities_json
                 FROM snippets
                 WHERE snippet_id = ?
             ''', (snippet_id,))
@@ -3005,7 +3008,8 @@ def get_snippet_by_id(db_path: str, snippet_id: int) -> Optional[Dict[str, Any]]
                 'message': row[3],
                 'media': row[4],
                 'media_type': row[5],
-                'created_at': row[6]
+                'created_at': row[6],
+                'entities_json': row[7] if len(row) > 7 else None
             }
         
     except sqlite3.Error as e:
@@ -3020,7 +3024,8 @@ def create_snippet(
     trigger: str,
     message: str,
     media: Optional[str] = None,
-    media_type: Optional[str] = None
+    media_type: Optional[str] = None,
+    entities_json: Optional[str] = None
 ) -> Optional[int]:
     """
     Создает новый сниппет.
@@ -3044,9 +3049,9 @@ def create_snippet(
             current_time = int(time.time())
             
             cursor.execute('''
-                INSERT INTO snippets (user_id, trigger, message, media, media_type, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, trigger, message, media, media_type, current_time))
+                INSERT INTO snippets (user_id, trigger, message, media, media_type, created_at, entities_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, trigger, message, media, media_type, current_time, entities_json))
             
             return cursor.lastrowid
         
@@ -3063,7 +3068,8 @@ def update_snippet(
     trigger: Optional[str] = None,
     message: Optional[str] = None,
     media: Optional[str] = None,
-    media_type: Optional[str] = None
+    media_type: Optional[str] = None,
+    entities_json: Optional[str] = None
 ) -> bool:
     """
     Обновляет существующий сниппет.
@@ -3113,6 +3119,10 @@ def update_snippet(
             if media_type is not None:
                 update_fields.append('media_type = ?')
                 update_values.append(media_type)
+            
+            if entities_json is not None:
+                update_fields.append('entities_json = ?')
+                update_values.append(entities_json)
             
             if not update_fields:
                 return False
