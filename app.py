@@ -4468,6 +4468,28 @@ async def check_trigger_endpoint(
         raise HTTPException(status_code=500, detail=f"Ошибка проверки триггера: {str(e)}")
 
 
+@app.get("/api/snippets/trigger/{trigger}")
+async def get_snippet_by_trigger_endpoint(trigger: str):
+    """
+    Получает сниппет по триггеру.
+    Публичный endpoint для использования в группах.
+    """
+    try:
+        trigger = trigger.strip().lower()
+        snippet = get_snippet_by_trigger(DB_PATH, trigger)
+        if not snippet:
+            raise HTTPException(status_code=404, detail="Сниппет не найден")
+        return {
+            "status": "ok",
+            "snippet": snippet
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка получения сниппета по триггеру: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка получения сниппета: {str(e)}")
+
+
 @app.get("/api/snippets/{snippet_id}")
 async def get_snippet_by_id_endpoint(snippet_id: int):
     """
