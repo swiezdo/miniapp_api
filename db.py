@@ -2840,3 +2840,364 @@ def delete_feedback_message(db_path: str, group_message_id: int) -> bool:
         print(f"Ошибка удаления feedback_message: {e}")
         traceback.print_exc()
         return False
+
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ СО СНИППЕТАМИ ==========
+
+def get_all_snippets(db_path: str) -> List[Dict[str, Any]]:
+    """
+    Получает все сниппеты из базы данных.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        Список словарей с данными сниппетов
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            cursor.execute('''
+                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at
+                FROM snippets
+                ORDER BY created_at DESC
+            ''')
+            
+            rows = cursor.fetchall()
+            snippets = []
+            for row in rows:
+                snippets.append({
+                    'snippet_id': row[0],
+                    'user_id': row[1],
+                    'trigger': row[2],
+                    'message': row[3],
+                    'media': row[4],
+                    'media_type': row[5],
+                    'created_at': row[6]
+                })
+            
+            return snippets
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения всех сниппетов: {e}")
+        traceback.print_exc()
+        return []
+
+
+def get_user_snippets(db_path: str, user_id: int) -> List[Dict[str, Any]]:
+    """
+    Получает все сниппеты пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Список словарей с данными сниппетов пользователя
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            cursor.execute('''
+                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at
+                FROM snippets
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            
+            rows = cursor.fetchall()
+            snippets = []
+            for row in rows:
+                snippets.append({
+                    'snippet_id': row[0],
+                    'user_id': row[1],
+                    'trigger': row[2],
+                    'message': row[3],
+                    'media': row[4],
+                    'media_type': row[5],
+                    'created_at': row[6]
+                })
+            
+            return snippets
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения сниппетов пользователя: {e}")
+        traceback.print_exc()
+        return []
+
+
+def get_snippet_by_trigger(db_path: str, trigger: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает сниппет по триггеру.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        trigger: Триггер сниппета
+    
+    Returns:
+        Словарь с данными сниппета или None если не найден
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('''
+                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at
+                FROM snippets
+                WHERE trigger = ?
+            ''', (trigger,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return None
+            
+            return {
+                'snippet_id': row[0],
+                'user_id': row[1],
+                'trigger': row[2],
+                'message': row[3],
+                'media': row[4],
+                'media_type': row[5],
+                'created_at': row[6]
+            }
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения сниппета по триггеру: {e}")
+        traceback.print_exc()
+        return None
+
+
+def get_snippet_by_id(db_path: str, snippet_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает сниппет по ID.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        snippet_id: ID сниппета
+    
+    Returns:
+        Словарь с данными сниппета или None если не найден
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('''
+                SELECT snippet_id, user_id, trigger, message, media, media_type, created_at
+                FROM snippets
+                WHERE snippet_id = ?
+            ''', (snippet_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return None
+            
+            return {
+                'snippet_id': row[0],
+                'user_id': row[1],
+                'trigger': row[2],
+                'message': row[3],
+                'media': row[4],
+                'media_type': row[5],
+                'created_at': row[6]
+            }
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения сниппета по ID: {e}")
+        traceback.print_exc()
+        return None
+
+
+def create_snippet(
+    db_path: str,
+    user_id: int,
+    trigger: str,
+    message: str,
+    media: Optional[str] = None,
+    media_type: Optional[str] = None
+) -> Optional[int]:
+    """
+    Создает новый сниппет.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        trigger: Триггер сниппета
+        message: Текст сниппета
+        media: file_id медиа (опционально)
+        media_type: Тип медиа 'photo' или 'video' (опционально)
+    
+    Returns:
+        snippet_id созданного сниппета или None при ошибке
+    """
+    try:
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return None
+            
+            current_time = int(time.time())
+            
+            cursor.execute('''
+                INSERT INTO snippets (user_id, trigger, message, media, media_type, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, trigger, message, media, media_type, current_time))
+            
+            return cursor.lastrowid
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка создания сниппета: {e}")
+        traceback.print_exc()
+        return None
+
+
+def update_snippet(
+    db_path: str,
+    snippet_id: int,
+    user_id: int,
+    trigger: Optional[str] = None,
+    message: Optional[str] = None,
+    media: Optional[str] = None,
+    media_type: Optional[str] = None
+) -> bool:
+    """
+    Обновляет существующий сниппет.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        snippet_id: ID сниппета
+        user_id: ID пользователя (для проверки прав)
+        trigger: Новый триггер (опционально)
+        message: Новый текст (опционально)
+        media: Новый file_id медиа (опционально, None для удаления)
+        media_type: Новый тип медиа (опционально, None для удаления)
+    
+    Returns:
+        True при успешном обновлении, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем, что сниппет существует и принадлежит пользователю
+            cursor.execute('''
+                SELECT snippet_id FROM snippets
+                WHERE snippet_id = ? AND user_id = ?
+            ''', (snippet_id, user_id))
+            
+            if not cursor.fetchone():
+                return False
+            
+            # Формируем список полей для обновления
+            update_fields = []
+            update_values = []
+            
+            if trigger is not None:
+                update_fields.append('trigger = ?')
+                update_values.append(trigger)
+            
+            if message is not None:
+                update_fields.append('message = ?')
+                update_values.append(message)
+            
+            if media is not None:
+                update_fields.append('media = ?')
+                update_values.append(media)
+            
+            if media_type is not None:
+                update_fields.append('media_type = ?')
+                update_values.append(media_type)
+            
+            if not update_fields:
+                return False
+            
+            # Добавляем snippet_id в конец для WHERE
+            update_values.append(snippet_id)
+            
+            # Выполняем обновление
+            sql = f'''
+                UPDATE snippets
+                SET {', '.join(update_fields)}
+                WHERE snippet_id = ?
+            '''
+            
+            cursor.execute(sql, update_values)
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка обновления сниппета: {e}")
+        traceback.print_exc()
+        return False
+
+
+def delete_snippet(db_path: str, snippet_id: int, user_id: int) -> bool:
+    """
+    Удаляет сниппет.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        snippet_id: ID сниппета
+        user_id: ID пользователя (для проверки прав)
+    
+    Returns:
+        True при успешном удалении, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем, что сниппет существует и принадлежит пользователю
+            cursor.execute('''
+                DELETE FROM snippets
+                WHERE snippet_id = ? AND user_id = ?
+            ''', (snippet_id, user_id))
+            
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка удаления сниппета: {e}")
+        traceback.print_exc()
+        return False
+
+
+def check_trigger_exists(db_path: str, trigger: str, exclude_snippet_id: Optional[int] = None) -> bool:
+    """
+    Проверяет, существует ли сниппет с указанным триггером.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        trigger: Триггер для проверки
+        exclude_snippet_id: ID сниппета, который исключается из проверки (для обновления)
+    
+    Returns:
+        True если триггер уже существует, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            if exclude_snippet_id is not None:
+                cursor.execute('''
+                    SELECT snippet_id FROM snippets
+                    WHERE trigger = ? AND snippet_id != ?
+                ''', (trigger, exclude_snippet_id))
+            else:
+                cursor.execute('''
+                    SELECT snippet_id FROM snippets
+                    WHERE trigger = ?
+                ''', (trigger,))
+            
+            return cursor.fetchone() is not None
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка проверки существования триггера: {e}")
+        traceback.print_exc()
+        return False

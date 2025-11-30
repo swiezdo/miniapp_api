@@ -63,6 +63,14 @@ from db import (
     get_user_notifications,
     toggle_notification,
     save_feedback_message,
+    get_all_snippets,
+    get_user_snippets,
+    get_snippet_by_id,
+    get_snippet_by_trigger,
+    create_snippet,
+    update_snippet,
+    delete_snippet,
+    check_trigger_exists,
 )
 from image_utils import (
     process_image_for_upload,
@@ -4390,6 +4398,229 @@ async def send_waves_screenshot(
             status_code=500,
             detail=f"Ошибка при создании скриншота волн: {str(e)}"
         )
+
+
+# ========== API ЭНДПОИНТЫ ДЛЯ СНИППЕТОВ ==========
+
+@app.get("/api/snippets/all")
+async def get_all_snippets_endpoint(use_bot_token: bool = Query(False)):
+    """
+    Получает все сниппеты.
+    Требует авторизации через bot token (use_bot_token=true).
+    """
+    # Проверка авторизации через bot token
+    if not use_bot_token:
+        raise HTTPException(status_code=401, detail="Требуется авторизация")
+    
+    try:
+        snippets = get_all_snippets(DB_PATH)
+        return {
+            "status": "ok",
+            "snippets": snippets
+        }
+    except Exception as e:
+        print(f"Ошибка получения всех сниппетов: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка получения сниппетов: {str(e)}")
+
+
+@app.get("/api/snippets/my")
+async def get_my_snippets_endpoint(
+    user_id: Optional[int] = Query(None),
+    x_telegram_init_data: Optional[str] = Header(None)
+):
+    """
+    Получает сниппеты текущего пользователя.
+    Может использовать либо Telegram initData, либо user_id параметр с bot token.
+    """
+    # Если user_id передан как параметр, используем его (для бота)
+    # Иначе используем get_current_user для веб-приложения
+    if user_id is None:
+        user_id = get_current_user(x_telegram_init_data)
+    
+    try:
+        snippets = get_user_snippets(DB_PATH, user_id)
+        return {
+            "status": "ok",
+            "snippets": snippets
+        }
+    except Exception as e:
+        print(f"Ошибка получения сниппетов пользователя: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка получения сниппетов: {str(e)}")
+
+
+@app.get("/api/snippets/{snippet_id}")
+async def get_snippet_by_id_endpoint(snippet_id: int):
+    """
+    Получает сниппет по ID.
+    """
+    try:
+        snippet = get_snippet_by_id(DB_PATH, snippet_id)
+        if not snippet:
+            raise HTTPException(status_code=404, detail="Сниппет не найден")
+        return {
+            "status": "ok",
+            "snippet": snippet
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка получения сниппета: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка получения сниппета: {str(e)}")
+
+
+@app.post("/api/snippets/create")
+async def create_snippet_endpoint(
+    trigger: str = Form(...),
+    message: str = Form(...),
+    media: Optional[str] = Form(None),
+    media_type: Optional[str] = Form(None),
+    user_id: Optional[int] = Form(None),
+    x_telegram_init_data: Optional[str] = Header(None)
+):
+    """
+    Создает новый сниппет.
+    Может использовать либо Telegram initData, либо user_id параметр с bot token.
+    """
+    # Если user_id передан как параметр, используем его (для бота)
+    # Иначе используем get_current_user для веб-приложения
+    if user_id is None:
+        user_id = get_current_user(x_telegram_init_data)
+    
+    try:
+        # Валидация триггера
+        if not trigger or not trigger.strip():
+            raise HTTPException(status_code=400, detail="Триггер не может быть пустым")
+        
+        trigger = trigger.strip().lower()
+        
+        # Проверка уникальности триггера
+        if check_trigger_exists(DB_PATH, trigger):
+            raise HTTPException(status_code=400, detail="Сниппет с таким триггером уже существует")
+        
+        # Валидация сообщения
+        if not message or not message.strip():
+            raise HTTPException(status_code=400, detail="Сообщение не может быть пустым")
+        
+        # Валидация media_type
+        if media and media_type not in ('photo', 'video'):
+            raise HTTPException(status_code=400, detail="Недопустимый тип медиа")
+        
+        snippet_id = create_snippet(DB_PATH, user_id, trigger, message, media, media_type)
+        
+        if not snippet_id:
+            raise HTTPException(status_code=500, detail="Ошибка создания сниппета")
+        
+        return {
+            "status": "ok",
+            "snippet_id": snippet_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка создания сниппета: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка создания сниппета: {str(e)}")
+
+
+@app.put("/api/snippets/{snippet_id}")
+async def update_snippet_endpoint(
+    snippet_id: int,
+    trigger: Optional[str] = Form(None),
+    message: Optional[str] = Form(None),
+    media: Optional[str] = Form(None),
+    media_type: Optional[str] = Form(None),
+    user_id: Optional[int] = Form(None),
+    x_telegram_init_data: Optional[str] = Header(None)
+):
+    """
+    Обновляет существующий сниппет.
+    Пользователь может обновлять только свои сниппеты.
+    Может использовать либо Telegram initData, либо user_id параметр с bot token.
+    """
+    # Если user_id передан как параметр, используем его (для бота)
+    # Иначе используем get_current_user для веб-приложения
+    if user_id is None:
+        user_id = get_current_user(x_telegram_init_data)
+    
+    try:
+        # Проверяем, что сниппет существует и принадлежит пользователю
+        snippet = get_snippet_by_id(DB_PATH, snippet_id)
+        if not snippet:
+            raise HTTPException(status_code=404, detail="Сниппет не найден")
+        
+        if snippet['user_id'] != user_id:
+            raise HTTPException(status_code=403, detail="Нет прав на редактирование этого сниппета")
+        
+        # Валидация триггера, если он обновляется
+        if trigger is not None:
+            trigger = trigger.strip().lower()
+            if not trigger:
+                raise HTTPException(status_code=400, detail="Триггер не может быть пустым")
+            
+            # Проверка уникальности триггера (исключая текущий сниппет)
+            if check_trigger_exists(DB_PATH, trigger, exclude_snippet_id=snippet_id):
+                raise HTTPException(status_code=400, detail="Сниппет с таким триггером уже существует")
+        
+        # Валидация сообщения
+        if message is not None and not message.strip():
+            raise HTTPException(status_code=400, detail="Сообщение не может быть пустым")
+        
+        # Валидация media_type
+        if media and media_type not in ('photo', 'video'):
+            raise HTTPException(status_code=400, detail="Недопустимый тип медиа")
+        
+        success = update_snippet(DB_PATH, snippet_id, user_id, trigger, message, media, media_type)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Ошибка обновления сниппета")
+        
+        return {
+            "status": "ok"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка обновления сниппета: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка обновления сниппета: {str(e)}")
+
+
+@app.delete("/api/snippets/{snippet_id}")
+async def delete_snippet_endpoint(
+    snippet_id: int,
+    user_id: Optional[int] = Query(None),
+    x_telegram_init_data: Optional[str] = Header(None)
+):
+    """
+    Удаляет сниппет.
+    Пользователь может удалять только свои сниппеты.
+    Может использовать либо Telegram initData, либо user_id параметр с bot token.
+    """
+    # Если user_id передан как параметр, используем его (для бота)
+    # Иначе используем get_current_user для веб-приложения
+    if user_id is None:
+        user_id = get_current_user(x_telegram_init_data)
+    
+    try:
+        # Проверяем, что сниппет существует и принадлежит пользователю
+        snippet = get_snippet_by_id(DB_PATH, snippet_id)
+        if not snippet:
+            raise HTTPException(status_code=404, detail="Сниппет не найден")
+        
+        if snippet['user_id'] != user_id:
+            raise HTTPException(status_code=403, detail="Нет прав на удаление этого сниппета")
+        
+        success = delete_snippet(DB_PATH, snippet_id, user_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Ошибка удаления сниппета")
+        
+        return {
+            "status": "ok"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка удаления сниппета: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка удаления сниппета: {str(e)}")
 
 
 @app.exception_handler(HTTPException)
