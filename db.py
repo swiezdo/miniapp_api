@@ -2271,17 +2271,17 @@ def mark_quest_done(db_path: str, user_id: int, psn_id: str, quest_type: str) ->
             
             # Получаем текущее состояние
             cursor.execute('''
-                SELECT hellmode, story, survival, trials, all_completed
+                SELECT hellmode, story, survival, trials, all_completed, first_completed_at
                 FROM quests_done
                 WHERE user_id = ?
             ''', (user_id,))
             row = cursor.fetchone()
             
             if row:
-                hellmode, story, survival, trials, all_completed = row
+                hellmode, story, survival, trials, all_completed, first_completed_at = row
             else:
                 # Записи нет, создаем новую
-                hellmode, story, survival, trials, all_completed = 0, 0, 0, 0, 0
+                hellmode, story, survival, trials, all_completed, first_completed_at = 0, 0, 0, 0, 0, None
             
             # Вычисляем сумму заданий до обновления
             sum_before = hellmode + story + survival + trials
@@ -2303,6 +2303,10 @@ def mark_quest_done(db_path: str, user_id: int, psn_id: str, quest_type: str) ->
             if sum_after == 4 and sum_before < 4:
                 all_completed = all_completed + 1
                 
+                # Если это первое завершение всех заданий - записываем время
+                if all_completed == 1:
+                    first_completed_at = int(time.time())
+                
                 # Если достигли 5 недель подряд, выдаем трофей "Герой недели"
                 if all_completed == 5:
                     add_trophy(db_path, user_id, 'week-hero')
@@ -2310,9 +2314,9 @@ def mark_quest_done(db_path: str, user_id: int, psn_id: str, quest_type: str) ->
             # Вставляем или обновляем запись
             cursor.execute('''
                 INSERT OR REPLACE INTO quests_done 
-                (user_id, psn_id, hellmode, story, survival, trials, all_completed)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, psn_id, hellmode, story, survival, trials, all_completed))
+                (user_id, psn_id, hellmode, story, survival, trials, all_completed, first_completed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, psn_id, hellmode, story, survival, trials, all_completed, first_completed_at))
             
             return True
             
@@ -2493,7 +2497,7 @@ def get_week_heroes(db_path: str, limit: int = 3) -> List[Dict[str, Any]]:
                 FROM quests_done qd
                 LEFT JOIN users u ON qd.user_id = u.user_id
                 WHERE qd.all_completed > 0
-                ORDER BY qd.all_completed DESC
+                ORDER BY qd.all_completed DESC, qd.first_completed_at ASC
                 LIMIT ?
             ''', (limit,))
             
