@@ -2685,7 +2685,7 @@ async def submit_hellmode_quest_application(
     if is_quest_done(DB_PATH, user_id, 'hellmode'):
         raise HTTPException(
             status_code=400,
-            detail="Вы уже выполнили это задание на этой неделе"
+            detail="Вы уже выполнили задание на этой неделе"
         )
     
     # Валидация
@@ -4094,7 +4094,7 @@ async def submit_top50_application(
     if quest_type and is_quest_done(DB_PATH, user_id, quest_type):
         raise HTTPException(
             status_code=400,
-            detail="Вы уже выполнили это задание на этой неделе"
+            detail="Вы уже выполнили задание на этой неделе"
         )
     
     # Валидация файлов
