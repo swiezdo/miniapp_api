@@ -275,6 +275,82 @@ def get_upcoming_birthdays(db_path: str, limit: int = 3) -> List[Dict[str, Any]]
         return []
 
 
+def get_today_birthdays(db_path: str) -> List[Dict[str, Any]]:
+    """
+    Получает список именинников на сегодня.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        Список словарей с данными именинников:
+        {
+            'user_id': int,
+            'psn_id': str,
+            'real_name': str
+        }
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            today = date.today()
+            today_day = today.day
+            today_month = today.month
+            
+            # Получаем всех пользователей с заполненным birthday
+            cursor.execute('''
+                SELECT b.user_id, b.psn_id, b.birthday, u.real_name
+                FROM birthdays b
+                LEFT JOIN users u ON b.user_id = u.user_id
+                WHERE b.birthday IS NOT NULL AND b.birthday != ''
+            ''')
+            
+            rows = cursor.fetchall()
+            
+            if not rows:
+                return []
+            
+            today_birthdays = []
+            
+            for row in rows:
+                user_id, psn_id, birthday_str, real_name = row
+                
+                if not birthday_str:
+                    continue
+                
+                # Парсим дату рождения (формат DD.MM или DD.MM.YYYY)
+                parts = birthday_str.split('.')
+                if len(parts) < 2:
+                    continue
+                
+                try:
+                    day = int(parts[0])
+                    month = int(parts[1])
+                    
+                    # Проверяем, совпадает ли с сегодняшней датой
+                    if day == today_day and month == today_month:
+                        today_birthdays.append({
+                            'user_id': user_id,
+                            'psn_id': psn_id or '',
+                            'real_name': real_name or ''
+                        })
+                except (ValueError, IndexError):
+                    continue
+            
+            return today_birthdays
+            
+    except sqlite3.Error as e:
+        print(f"Ошибка получения сегодняшних именинников: {e}")
+        traceback.print_exc()
+        return []
+    except Exception as e:
+        print(f"Ошибка обработки сегодняшних дней рождения: {e}")
+        traceback.print_exc()
+        return []
+
+
 def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
     """
     Получает профиль пользователя по user_id.

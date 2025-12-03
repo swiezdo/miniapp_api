@@ -54,6 +54,7 @@ from db import (
     get_recent_events,
     get_recent_comments,
     get_upcoming_birthdays,
+    get_today_birthdays,
     get_current_hellmode_quest,
     update_user_balance,
     is_quest_done,
@@ -2439,6 +2440,28 @@ async def get_upcoming_birthdays_feed(
         result.append(item)
     
     return {"birthdays": result}
+
+
+@app.get("/api/birthdays.today")
+async def get_today_birthdays_endpoint(
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Возвращает список именинников на сегодня.
+    Используется ботом для отправки поздравлений.
+    Бот должен передать BOT_TOKEN в заголовке Authorization.
+    
+    Returns:
+        Список именинников: user_id, psn_id, real_name
+    """
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(
+            status_code=401,
+            detail="Требуется авторизация бота"
+        )
+    
+    birthdays = get_today_birthdays(DB_PATH)
+    return {"birthdays": birthdays}
 
 
 @app.get("/api/weekHeroes")
