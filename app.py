@@ -59,6 +59,7 @@ from db import (
     update_user_balance,
     is_quest_done,
     mark_quest_done,
+    get_user_quests_status,
     reset_weekly_quests,
     get_notification_subscribers,
     get_user_notifications,
@@ -719,6 +720,29 @@ async def get_hellmode_quest():
     quest['proof'] = HELLMODE_PROOF
     
     return quest
+
+
+@app.get("/api/quests.status")
+async def get_quests_status(user_id: int = Depends(get_current_user)):
+    """
+    Возвращает статус выполнения еженедельных заданий для текущего пользователя.
+    
+    Returns:
+        {hellmode: bool, story: bool, survival: bool, trials: bool, all_completed: int}
+    """
+    status = get_user_quests_status(DB_PATH, user_id)
+    
+    if status is None:
+        # Если записи нет, значит пользователь ничего не выполнил
+        return {
+            "hellmode": False,
+            "story": False,
+            "survival": False,
+            "trials": False,
+            "all_completed": 0
+        }
+    
+    return status
 
 
 def _read_waves_json() -> dict:
