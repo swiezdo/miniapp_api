@@ -4743,6 +4743,15 @@ def get_gift_price(gift_key: str) -> Optional[int]:
     return None
 
 
+def get_gift_info(gift_key: str) -> Optional[Dict[str, Any]]:
+    """Получает полную информацию о подарке по ключу (включая название)."""
+    gifts = load_gifts_config()
+    for gift in gifts:
+        if gift.get('key') == gift_key:
+            return gift
+    return None
+
+
 @app.get("/gifts")
 async def api_get_gifts():
     """
@@ -4830,6 +4839,49 @@ async def api_send_gift(
             # Возвращаем магатаму если не удалось отправить подарок
             update_user_balance(DB_PATH, sender_id, gift_price)
             raise HTTPException(status_code=500, detail="Ошибка отправки подарка")
+        
+        # Отправляем уведомление в группу
+        try:
+            gift_info = get_gift_info(gift_key)
+            gift_name = gift_info.get('name', gift_key) if gift_info else gift_key
+            
+            # Получаем username отправителя
+            sender_mention = sender.get('psn_id', 'Участник')
+            try:
+                sender_chat = await get_chat_member(BOT_TOKEN, GROUP_ID, sender_id)
+                if sender_chat.get('ok') and sender_chat.get('result', {}).get('user', {}).get('username'):
+                    sender_mention = f"@{sender_chat['result']['user']['username']}"
+            except Exception:
+                pass
+            
+            # Получаем username получателя
+            recipient_mention = recipient.get('psn_id', 'Участник')
+            try:
+                recipient_chat = await get_chat_member(BOT_TOKEN, GROUP_ID, recipient_id)
+                if recipient_chat.get('ok') and recipient_chat.get('result', {}).get('user', {}).get('username'):
+                    recipient_mention = f"@{recipient_chat['result']['user']['username']}"
+            except Exception:
+                pass
+            
+            # Формируем сообщение
+            caption = (
+                f"🎁 Участник {sender_mention} подарил {recipient_mention} "
+                f"подарок «{gift_name}» за {gift_price} магатама!\n\n"
+                f"📱 Посмотреть подарки можно в профиле в мини-приложении"
+            )
+            
+            # Отправляем в группу с баннером
+            banner_path = '/root/gyozenbot/src/banner.png'
+            await send_telegram_single_media(
+                bot_token=BOT_TOKEN,
+                chat_id=GROUP_ID,
+                media_type='photo',
+                media_path=banner_path,
+                caption=caption
+            )
+        except Exception as e:
+            # Не прерываем процесс если уведомление не отправилось
+            print(f"Ошибка отправки уведомления о подарке в группу: {e}")
         
         return {
             "status": "ok",

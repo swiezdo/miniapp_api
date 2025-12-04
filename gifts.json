@@ -1,7 +1,7 @@
 [
   {"key": "weed", "name": "Травка", "price": 420, "colors": ["#4ade80", "#22c55e"]},
   {"key": "poop", "name": "Какашка", "price": 350, "colors": ["#a1887f", "#8d6e63"]},
-  {"key": "frog", "name": "Лягушка", "price": 550, "colors": ["#7efe5e", "#3e9e3e"]},
+  {"key": "frog", "name": "Лягушонок", "price": 550, "colors": ["#7efe5e", "#3e9e3e"]},
   {"key": "cigar", "name": "Сигара", "price": 700, "colors": ["#d4a574", "#b8956e"]},
   {"key": "brick", "name": "Кирпич", "price": 400, "colors": ["#fe9e5e", "#fe7e3e"]},
   {"key": "binky", "name": "Соска", "price": 380, "colors": ["#f472b6", "#ec4899"]},
