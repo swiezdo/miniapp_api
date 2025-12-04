@@ -4,6 +4,9 @@
   {"key": "frog", "price": 500},
   {"key": "cigar", "price": 500},
   {"key": "brick", "price": 500},
-  {"key": "binky", "price": 500}
+  {"key": "binky", "price": 500},
+  {"key": "pill", "price": 500},
+  {"key": "baby", "price": 500},
+  {"key": "banana", "price": 500},
+  {"key": "ambulance", "price": 500}
 ]
-
