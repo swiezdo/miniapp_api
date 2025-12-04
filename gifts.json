@@ -1,12 +1,12 @@
 [
-  {"key": "weed", "name": "Травка", "price": 500},
-  {"key": "poop", "name": "Какашка", "price": 500},
-  {"key": "frog", "name": "Лягушка", "price": 500},
-  {"key": "cigar", "name": "Сигара", "price": 500},
-  {"key": "brick", "name": "Кирпич", "price": 500},
-  {"key": "binky", "name": "Соска", "price": 500},
-  {"key": "pill", "name": "Таблетка", "price": 500},
-  {"key": "baby", "name": "Малыш", "price": 500},
-  {"key": "banana", "name": "Банан", "price": 500},
-  {"key": "ambulance", "name": "Дурка", "price": 500}
+  {"key": "weed", "name": "Травка", "price": 500, "colors": ["#4ade80", "#22c55e"]},
+  {"key": "poop", "name": "Какашка", "price": 500, "colors": ["#a1887f", "#8d6e63"]},
+  {"key": "frog", "name": "Лягушка", "price": 500, "colors": ["#7efe5e", "#3e9e3e"]},
+  {"key": "cigar", "name": "Сигара", "price": 500, "colors": ["#d4a574", "#b8956e"]},
+  {"key": "brick", "name": "Кирпич", "price": 500, "colors": ["#fe9e5e", "#fe7e3e"]},
+  {"key": "binky", "name": "Соска", "price": 500, "colors": ["#f472b6", "#ec4899"]},
+  {"key": "pill", "name": "Таблетка", "price": 500, "colors": ["#fe3e1e", "#fede3e"]},
+  {"key": "baby", "name": "Малыш", "price": 500, "colors": ["#fe9e1e", "#febe3e"]},
+  {"key": "banana", "name": "Банан", "price": 500, "colors": ["#fde047", "#facc15"]},
+  {"key": "ambulance", "name": "Дурка", "price": 500, "colors": ["#fe1e1e", "#dc2626"]}
 ]
