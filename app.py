@@ -73,6 +73,9 @@ from db import (
     update_snippet,
     delete_snippet,
     check_trigger_exists,
+    send_gift,
+    get_user_gifts,
+    get_user_gifts_count,
 )
 from image_utils import (
     process_image_for_upload,
@@ -4712,6 +4715,134 @@ async def delete_snippet_endpoint(
     except Exception as e:
         print(f"Ошибка удаления сниппета: {e}")
         raise HTTPException(status_code=500, detail=f"Ошибка удаления сниппета: {str(e)}")
+
+
+# ============================================
+# API для подарков
+# ============================================
+
+# Загружаем конфиг подарков
+GIFTS_CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'gifts.json')
+
+def load_gifts_config() -> List[Dict[str, Any]]:
+    """Загружает конфигурацию подарков из JSON файла."""
+    try:
+        with open(GIFTS_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Ошибка загрузки gifts.json: {e}")
+        return []
+
+
+def get_gift_price(gift_key: str) -> Optional[int]:
+    """Получает цену подарка по ключу."""
+    gifts = load_gifts_config()
+    for gift in gifts:
+        if gift.get('key') == gift_key:
+            return gift.get('price', 0)
+    return None
+
+
+@app.get("/gifts")
+async def api_get_gifts():
+    """
+    Возвращает список всех подарков с ценами.
+    """
+    try:
+        gifts = load_gifts_config()
+        return {"gifts": gifts}
+    except Exception as e:
+        print(f"Ошибка получения списка подарков: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка получения подарков: {str(e)}")
+
+
+@app.get("/users/{user_id}/gifts")
+async def api_get_user_gifts(user_id: int):
+    """
+    Возвращает подарки пользователя, сгруппированные по типу с количеством.
+    """
+    try:
+        gifts = get_user_gifts(DB_PATH, user_id)
+        return {"gifts": gifts}
+    except Exception as e:
+        print(f"Ошибка получения подарков пользователя: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка получения подарков: {str(e)}")
+
+
+@app.post("/gifts/send")
+async def api_send_gift(
+    request: Request,
+    x_telegram_init_data: str = Header(None, alias="X-Telegram-Init-Data")
+):
+    """
+    Отправляет подарок другому пользователю.
+    Тело запроса: {"recipient_id": int, "gift_key": str}
+    """
+    try:
+        # Валидируем initData
+        validated_data = validate_init_data(x_telegram_init_data, BOT_TOKEN) if x_telegram_init_data else None
+        if not validated_data:
+            raise HTTPException(status_code=401, detail="Невалидные данные авторизации")
+        
+        sender_id = get_user_id_from_init_data(validated_data)
+        if not sender_id:
+            raise HTTPException(status_code=401, detail="Не удалось получить ID пользователя")
+        
+        # Получаем тело запроса
+        body = await request.json()
+        recipient_id = body.get("recipient_id")
+        gift_key = body.get("gift_key")
+        
+        if not recipient_id or not gift_key:
+            raise HTTPException(status_code=400, detail="Не указан получатель или тип подарка")
+        
+        # Проверяем что отправитель не дарит сам себе
+        if sender_id == recipient_id:
+            raise HTTPException(status_code=400, detail="Нельзя подарить подарок самому себе")
+        
+        # Проверяем существование подарка и получаем его цену
+        gift_price = get_gift_price(gift_key)
+        if gift_price is None:
+            raise HTTPException(status_code=400, detail="Неизвестный тип подарка")
+        
+        # Проверяем баланс отправителя
+        sender = get_user(DB_PATH, sender_id)
+        if not sender:
+            raise HTTPException(status_code=404, detail="Отправитель не найден")
+        
+        sender_balance = sender.get('balance', 0)
+        if sender_balance < gift_price:
+            raise HTTPException(status_code=400, detail="Недостаточно магатамы")
+        
+        # Проверяем существование получателя
+        recipient = get_user(DB_PATH, recipient_id)
+        if not recipient:
+            raise HTTPException(status_code=404, detail="Получатель не найден")
+        
+        # Списываем магатаму с баланса отправителя
+        update_user_balance(DB_PATH, sender_id, -gift_price)
+        new_balance = sender_balance - gift_price
+        
+        # Отправляем подарок
+        success = send_gift(DB_PATH, sender_id, recipient_id, gift_key)
+        
+        if not success:
+            # Возвращаем магатаму если не удалось отправить подарок
+            update_user_balance(DB_PATH, sender_id, gift_price)
+            raise HTTPException(status_code=500, detail="Ошибка отправки подарка")
+        
+        return {
+            "status": "ok",
+            "new_balance": new_balance,
+            "message": f"Подарок успешно отправлен пользователю {recipient.get('psn_id', 'Неизвестный')}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка отправки подарка: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка отправки подарка: {str(e)}")
 
 
 @app.exception_handler(HTTPException)

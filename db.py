@@ -3291,3 +3291,120 @@ def check_trigger_exists(db_path: str, trigger: str, exclude_snippet_id: Optiona
         print(f"Ошибка проверки существования триггера: {e}")
         traceback.print_exc()
         return False
+
+
+# ============================================
+# Функции для работы с подарками (user_gifts)
+# ============================================
+
+def send_gift(db_path: str, sender_id: int, recipient_id: int, gift_key: str) -> bool:
+    """
+    Отправляет подарок от одного пользователя другому.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        sender_id: ID отправителя
+        recipient_id: ID получателя
+        gift_key: Ключ подарка
+    
+    Returns:
+        True при успешной отправке, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            cursor.execute('''
+                INSERT INTO user_gifts (recipient_id, sender_id, gift_key)
+                VALUES (?, ?, ?)
+            ''', (recipient_id, sender_id, gift_key))
+            
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка отправки подарка: {e}")
+        traceback.print_exc()
+        return False
+
+
+def get_user_gifts(db_path: str, user_id: int) -> List[Dict[str, Any]]:
+    """
+    Получает подарки пользователя, сгруппированные по типу с количеством.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Список словарей: [{'gift_key': str, 'count': int, 'senders': [{'user_id': int, 'psn_id': str}]}]
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            # Получаем все подарки пользователя с информацией об отправителях
+            cursor.execute('''
+                SELECT ug.gift_key, ug.sender_id, u.psn_id
+                FROM user_gifts ug
+                LEFT JOIN users u ON ug.sender_id = u.user_id
+                WHERE ug.recipient_id = ?
+                ORDER BY ug.gift_key, ug.created_at DESC
+            ''', (user_id,))
+            
+            rows = cursor.fetchall()
+            
+            if not rows:
+                return []
+            
+            # Группируем по gift_key
+            gifts_dict = {}
+            for gift_key, sender_id, psn_id in rows:
+                if gift_key not in gifts_dict:
+                    gifts_dict[gift_key] = {
+                        'gift_key': gift_key,
+                        'count': 0,
+                        'senders': []
+                    }
+                gifts_dict[gift_key]['count'] += 1
+                gifts_dict[gift_key]['senders'].append({
+                    'user_id': sender_id,
+                    'psn_id': psn_id or 'Неизвестный'
+                })
+            
+            return list(gifts_dict.values())
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения подарков: {e}")
+        traceback.print_exc()
+        return []
+
+
+def get_user_gifts_count(db_path: str, user_id: int) -> int:
+    """
+    Получает общее количество подарков пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Количество подарков
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return 0
+            
+            cursor.execute('''
+                SELECT COUNT(*) FROM user_gifts WHERE recipient_id = ?
+            ''', (user_id,))
+            
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка подсчёта подарков: {e}")
+        traceback.print_exc()
+        return 0
