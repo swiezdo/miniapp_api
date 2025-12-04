@@ -3337,7 +3337,7 @@ def get_user_gifts(db_path: str, user_id: int) -> List[Dict[str, Any]]:
         user_id: ID пользователя
     
     Returns:
-        Список словарей: [{'gift_key': str, 'count': int, 'senders': [{'user_id': int, 'psn_id': str}]}]
+        Список словарей: [{'gift_key': str, 'count': int, 'senders': [{'user_id': int, 'psn_id': str, 'avatar_url': str}]}]
     """
     try:
         with db_connection(db_path) as cursor:
@@ -3346,7 +3346,7 @@ def get_user_gifts(db_path: str, user_id: int) -> List[Dict[str, Any]]:
             
             # Получаем все подарки пользователя с информацией об отправителях
             cursor.execute('''
-                SELECT ug.gift_key, ug.sender_id, u.psn_id
+                SELECT ug.gift_key, ug.sender_id, u.psn_id, u.avatar_url
                 FROM user_gifts ug
                 LEFT JOIN users u ON ug.sender_id = u.user_id
                 WHERE ug.recipient_id = ?
@@ -3360,7 +3360,7 @@ def get_user_gifts(db_path: str, user_id: int) -> List[Dict[str, Any]]:
             
             # Группируем по gift_key
             gifts_dict = {}
-            for gift_key, sender_id, psn_id in rows:
+            for gift_key, sender_id, psn_id, avatar_url in rows:
                 if gift_key not in gifts_dict:
                     gifts_dict[gift_key] = {
                         'gift_key': gift_key,
@@ -3370,7 +3370,8 @@ def get_user_gifts(db_path: str, user_id: int) -> List[Dict[str, Any]]:
                 gifts_dict[gift_key]['count'] += 1
                 gifts_dict[gift_key]['senders'].append({
                     'user_id': sender_id,
-                    'psn_id': psn_id or 'Неизвестный'
+                    'psn_id': psn_id or 'Неизвестный',
+                    'avatar_url': avatar_url
                 })
             
             return list(gifts_dict.values())
