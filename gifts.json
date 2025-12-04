@@ -1,12 +1,12 @@
 [
-  {"key": "weed", "price": 500},
-  {"key": "poop", "price": 500},
-  {"key": "frog", "price": 500},
-  {"key": "cigar", "price": 500},
-  {"key": "brick", "price": 500},
-  {"key": "binky", "price": 500},
-  {"key": "pill", "price": 500},
-  {"key": "baby", "price": 500},
-  {"key": "banana", "price": 500},
-  {"key": "ambulance", "price": 500}
+  {"key": "weed", "name": "Травка", "price": 500},
+  {"key": "poop", "name": "Какашка", "price": 500},
+  {"key": "frog", "name": "Лягушка", "price": 500},
+  {"key": "cigar", "name": "Сигара", "price": 500},
+  {"key": "brick", "name": "Кирпич", "price": 500},
+  {"key": "binky", "name": "Соска", "price": 500},
+  {"key": "pill", "name": "Таблетка", "price": 500},
+  {"key": "baby", "name": "Малыш", "price": 500},
+  {"key": "banana", "name": "Банан", "price": 500},
+  {"key": "ambulance", "name": "Дурка", "price": 500}
 ]
