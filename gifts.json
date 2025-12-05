@@ -1,5 +1,4 @@
 [
-  {"key": "weed", "name": "Травка", "price": 420, "emoji_id": "5280987947737310654", "colors": ["#4ade80", "#22c55e"]},
   {"key": "poop", "name": "Какашка", "price": 350, "emoji_id": "5280987947737310654", "colors": ["#a1887f", "#8d6e63"]},
   {"key": "frog", "name": "Лягушонок", "price": 550, "emoji_id": "5280987947737310654", "colors": ["#7efe5e", "#3e9e3e"]},
   {"key": "cigar", "name": "Сигара", "price": 700, "emoji_id": "5280987947737310654", "colors": ["#d4a574", "#b8956e"]},
