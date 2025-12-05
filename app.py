@@ -4772,6 +4772,13 @@ async def api_get_user_gifts(user_id: int):
     """
     try:
         gifts = get_user_gifts(DB_PATH, user_id)
+        
+        # Добавляем emoji_id из конфигурации подарков
+        for gift in gifts:
+            gift_info = get_gift_info(gift.get('gift_key'))
+            if gift_info:
+                gift['emoji_id'] = gift_info.get('emoji_id')
+        
         return {"gifts": gifts}
     except Exception as e:
         print(f"Ошибка получения подарков пользователя: {e}")
