@@ -16,6 +16,6 @@
   {"key": "heart", "name": "Сердце", "price": 600, "colors": ["#ff6b9d", "#f0d8d8"]},
   {"key": "bear", "name": "Мишка", "price": 550, "colors": ["#d4a574", "#b8956e"]},
   {"key": "socks", "name": "Носки", "price": 350, "colors": ["#90a8d8", "#6088c8"]},
-  {"key": "monkey", "name": "Обезьяна", "price": 420, "colors": ["#906030", "#b8956e"]},
+  {"key": "monkey", "name": "Обезьянка", "price": 420, "colors": ["#906030", "#b8956e"]},
   {"key": "box", "name": "Коробка", "price": 450, "colors": ["#ffd700", "#309000"]}
 ]
