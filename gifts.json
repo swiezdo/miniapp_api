@@ -8,5 +8,14 @@
   {"key": "pill", "name": "Таблетка", "price": 450, "colors": ["#fe3e1e", "#fede3e"]},
   {"key": "baby", "name": "Малыш", "price": 650, "colors": ["#fe9e1e", "#febe3e"]},
   {"key": "banana", "name": "Банан", "price": 420, "colors": ["#fde047", "#facc15"]},
-  {"key": "ambulance", "name": "Дурка", "price": 500, "colors": ["#fe1e1e", "#dc2626"]}
+  {"key": "ambulance", "name": "Дурка", "price": 500, "colors": ["#fe1e1e", "#dc2626"]},
+  {"key": "diamond", "name": "Бриллиант", "price": 700, "colors": ["#c0d8f0", "#0048a8"]},
+  {"key": "skull", "name": "Череп", "price": 450, "colors": ["#f0c0f0", "#f018f0"]},
+  {"key": "star", "name": "Звезда", "price": 500, "colors": ["#ffd700", "#ff8c00"]},
+  {"key": "book", "name": "Книга", "price": 400, "colors": ["#00f0d8", "#00d890"]},
+  {"key": "heart", "name": "Сердце", "price": 600, "colors": ["#ff6b9d", "#f0d8d8"]},
+  {"key": "bear", "name": "Мишка", "price": 550, "colors": ["#d4a574", "#b8956e"]},
+  {"key": "socks", "name": "Носки", "price": 350, "colors": ["#90a8d8", "#6088c8"]},
+  {"key": "monkey", "name": "Обезьяна", "price": 420, "colors": ["#906030", "#b8956e"]},
+  {"key": "box", "name": "Коробка", "price": 450, "colors": ["#ffd700", "#309000"]}
 ]
