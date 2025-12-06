@@ -287,7 +287,8 @@ def get_today_birthdays(db_path: str) -> List[Dict[str, Any]]:
         {
             'user_id': int,
             'psn_id': str,
-            'real_name': str
+            'real_name': str,
+            'age': int | None  # Возраст, если указан год рождения, иначе None
         }
     """
     try:
@@ -331,10 +332,21 @@ def get_today_birthdays(db_path: str) -> List[Dict[str, Any]]:
                     
                     # Проверяем, совпадает ли с сегодняшней датой
                     if day == today_day and month == today_month:
+                        # Вычисляем возраст, если указан год
+                        age = None
+                        if len(parts) >= 3 and parts[2]:
+                            try:
+                                birth_year = int(parts[2])
+                                # Если сегодня день рождения, то возраст = текущий год - год рождения
+                                age = today.year - birth_year
+                            except (ValueError, IndexError):
+                                age = None
+                        
                         today_birthdays.append({
                             'user_id': user_id,
                             'psn_id': psn_id or '',
-                            'real_name': real_name or ''
+                            'real_name': real_name or '',
+                            'age': age
                         })
                 except (ValueError, IndexError):
                     continue
