@@ -3409,3 +3409,182 @@ def get_user_gifts_count(db_path: str, user_id: int) -> int:
         print(f"Ошибка подсчёта подарков: {e}")
         traceback.print_exc()
         return 0
+
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С PENDING APPLICATIONS ==========
+
+def add_pending_application(
+    db_path: str,
+    user_id: int,
+    application_type: str,
+    target_key: str,
+    target_level: Optional[int] = None
+) -> bool:
+    """
+    Добавляет запись о pending заявке.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        application_type: Тип заявки ('trophy', 'mastery')
+        target_key: Ключ цели (trophy_key или category_key)
+        target_level: Уровень (только для mastery)
+    
+    Returns:
+        True при успешном добавлении, иначе False
+    """
+    valid_types = {'trophy', 'mastery'}
+    if application_type not in valid_types:
+        print(f"Ошибка: недопустимый тип заявки: {application_type}")
+        return False
+    
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            current_time = int(time.time())
+            
+            cursor.execute('''
+                INSERT OR IGNORE INTO pending_applications 
+                (user_id, application_type, target_key, target_level, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, application_type, target_key, target_level, current_time))
+            
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка добавления pending заявки: {e}")
+        traceback.print_exc()
+        return False
+
+
+def remove_pending_application(
+    db_path: str,
+    user_id: int,
+    application_type: str,
+    target_key: str,
+    target_level: Optional[int] = None
+) -> bool:
+    """
+    Удаляет запись о pending заявке.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        application_type: Тип заявки ('trophy', 'mastery')
+        target_key: Ключ цели (trophy_key или category_key)
+        target_level: Уровень (только для mastery)
+    
+    Returns:
+        True при успешном удалении, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            if target_level is not None:
+                cursor.execute('''
+                    DELETE FROM pending_applications
+                    WHERE user_id = ? AND application_type = ? AND target_key = ? AND target_level = ?
+                ''', (user_id, application_type, target_key, target_level))
+            else:
+                cursor.execute('''
+                    DELETE FROM pending_applications
+                    WHERE user_id = ? AND application_type = ? AND target_key = ? AND target_level IS NULL
+                ''', (user_id, application_type, target_key))
+            
+            return True  # Возвращаем True даже если записи не было
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка удаления pending заявки: {e}")
+        traceback.print_exc()
+        return False
+
+
+def get_user_pending_applications(db_path: str, user_id: int) -> List[Dict[str, Any]]:
+    """
+    Получает все pending заявки пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Список словарей с данными заявок:
+        [{'application_type': str, 'target_key': str, 'target_level': int|None, 'created_at': int}]
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            cursor.execute('''
+                SELECT application_type, target_key, target_level, created_at
+                FROM pending_applications
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            
+            rows = cursor.fetchall()
+            
+            applications = []
+            for row in rows:
+                applications.append({
+                    'application_type': row[0],
+                    'target_key': row[1],
+                    'target_level': row[2],
+                    'created_at': row[3]
+                })
+            
+            return applications
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения pending заявок: {e}")
+        traceback.print_exc()
+        return []
+
+
+def has_pending_application(
+    db_path: str,
+    user_id: int,
+    application_type: str,
+    target_key: str,
+    target_level: Optional[int] = None
+) -> bool:
+    """
+    Проверяет наличие pending заявки.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        application_type: Тип заявки ('trophy', 'mastery')
+        target_key: Ключ цели (trophy_key или category_key)
+        target_level: Уровень (только для mastery)
+    
+    Returns:
+        True если заявка существует, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            if target_level is not None:
+                cursor.execute('''
+                    SELECT 1 FROM pending_applications
+                    WHERE user_id = ? AND application_type = ? AND target_key = ? AND target_level = ?
+                ''', (user_id, application_type, target_key, target_level))
+            else:
+                cursor.execute('''
+                    SELECT 1 FROM pending_applications
+                    WHERE user_id = ? AND application_type = ? AND target_key = ? AND target_level IS NULL
+                ''', (user_id, application_type, target_key))
+            
+            return cursor.fetchone() is not None
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка проверки pending заявки: {e}")
+        traceback.print_exc()
+        return False

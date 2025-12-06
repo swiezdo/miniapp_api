@@ -76,6 +76,10 @@ from db import (
     send_gift,
     get_user_gifts,
     get_user_gifts_count,
+    add_pending_application,
+    remove_pending_application,
+    get_user_pending_applications,
+    has_pending_application,
 )
 from image_utils import (
     process_image_for_upload,
@@ -1955,6 +1959,13 @@ async def submit_mastery_application(
     
     max_levels = category.get('maxLevels', 0)
     
+    # Проверяем, нет ли уже активной заявки на этот уровень
+    if has_pending_application(DB_PATH, user_id, 'mastery', category_key, next_level):
+        raise HTTPException(
+            status_code=400,
+            detail="Заявка на этот уровень уже на рассмотрении"
+        )
+    
     # Валидация
     media_files = photos or []
 
@@ -2102,6 +2113,9 @@ async def submit_mastery_application(
             status_code=500,
             detail=f"Ошибка обработки изображений: {str(e)}"
         )
+    
+    # Добавляем pending запись после успешной отправки заявки
+    add_pending_application(DB_PATH, user_id, 'mastery', category_key, next_level)
     
     return {
         "status": "ok",
@@ -2269,6 +2283,9 @@ async def approve_mastery_application(
     except Exception as log_error:
         print(f"Не удалось логировать событие мастерства: {log_error}")
     
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'mastery', category_key, next_level)
+    
     return {
         "status": "ok",
         "success": True,
@@ -2355,6 +2372,9 @@ async def approve_trophy_application(
         import traceback
         traceback.print_exc()
         # Не прерываем выполнение, так как трофей уже добавлен
+    
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'trophy', trophy_key)
     
     return {
         "status": "ok",
@@ -2656,6 +2676,9 @@ async def reject_trophy_application(
         )
     except Exception as e:
         print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+    
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'trophy', trophy_key)
     
     return {
         "status": "ok",
@@ -3038,12 +3061,54 @@ async def reject_mastery_application(
     except Exception as e:
         print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
     
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'mastery', category_key, next_level)
+    
     return {
         "status": "ok",
         "success": True,
         "category_name": category_name,
         "level_name": level_name
     }
+
+
+# ========== API ЭНДПОИНТЫ ДЛЯ PENDING APPLICATIONS ==========
+
+@app.get("/api/pending.get")
+async def get_pending_applications_endpoint(
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Получает список pending (ожидающих рассмотрения) заявок текущего пользователя.
+    
+    Args:
+        user_id: ID пользователя (из dependency)
+    
+    Returns:
+        JSON со списком pending заявок:
+        {
+            "status": "ok",
+            "pending": [
+                {
+                    "application_type": "trophy" | "mastery",
+                    "target_key": str,
+                    "target_level": int | null,
+                    "created_at": int
+                }
+            ]
+        }
+    """
+    try:
+        pending = get_user_pending_applications(DB_PATH, user_id)
+        return {
+            "status": "ok",
+            "pending": pending
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка получения pending заявок: {str(e)}"
+        )
 
 
 # ========== API ЭНДПОИНТЫ ДЛЯ ТРОФЕЕВ ==========
@@ -3181,6 +3246,13 @@ async def submit_trophy_application(
         raise HTTPException(
             status_code=400,
             detail="Этот трофей уже получен"
+        )
+    
+    # Проверяем, нет ли уже активной заявки на этот трофей
+    if has_pending_application(DB_PATH, user_id, 'trophy', trophy_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Заявка на этот трофей уже на рассмотрении"
         )
     
     # Валидация
@@ -3343,6 +3415,9 @@ async def submit_trophy_application(
             status_code=500,
             detail=f"Ошибка обработки изображений: {str(e)}"
         )
+    
+    # Добавляем pending запись после успешной отправки заявки
+    add_pending_application(DB_PATH, user_id, 'trophy', trophy_key)
     
     return {
         "status": "ok",
