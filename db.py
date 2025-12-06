@@ -3426,14 +3426,14 @@ def add_pending_application(
     Args:
         db_path: Путь к файлу базы данных
         user_id: ID пользователя
-        application_type: Тип заявки ('trophy', 'mastery')
-        target_key: Ключ цели (trophy_key или category_key)
+        application_type: Тип заявки ('trophy', 'mastery', 'hellmode_quest', 'top50')
+        target_key: Ключ цели (trophy_key, category_key, 'hellmode_quest' или категория для top50)
         target_level: Уровень (только для mastery)
     
     Returns:
         True при успешном добавлении, иначе False
     """
-    valid_types = {'trophy', 'mastery'}
+    valid_types = {'trophy', 'mastery', 'hellmode_quest', 'top50'}
     if application_type not in valid_types:
         print(f"Ошибка: недопустимый тип заявки: {application_type}")
         return False

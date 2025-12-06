@@ -2714,6 +2714,13 @@ async def submit_hellmode_quest_application(
             detail="Вы уже выполнили задание на этой неделе"
         )
     
+    # Проверяем, нет ли уже активной заявки на это задание
+    if has_pending_application(DB_PATH, user_id, 'hellmode_quest', 'hellmode_quest'):
+        raise HTTPException(
+            status_code=400,
+            detail="Ваша заявка на получение награды за еженедельное задание HellMode уже отправлена и ожидает рассмотрения модераторами."
+        )
+    
     # Валидация
     media_files = photos or []
 
@@ -2857,6 +2864,9 @@ async def submit_hellmode_quest_application(
             detail=f"Ошибка обработки изображений: {str(e)}"
         )
     
+    # Добавляем pending запись после успешной отправки заявки
+    add_pending_application(DB_PATH, user_id, 'hellmode_quest', 'hellmode_quest')
+    
     return {
         "status": "ok",
         "success": True
@@ -2932,6 +2942,9 @@ async def approve_hellmode_quest_application(
         traceback.print_exc()
         # Не прерываем выполнение, так как баланс уже обновлен
     
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'hellmode_quest', 'hellmode_quest')
+    
     # Поздравление отправляется из бота, а не из API (как для трофеев)
     
     return {
@@ -2995,6 +3008,9 @@ async def reject_hellmode_quest_application(
         )
     except Exception as e:
         print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+    
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'hellmode_quest', 'hellmode_quest')
     
     return {
         "status": "ok",
@@ -4175,6 +4191,13 @@ async def submit_top50_application(
             detail="Вы уже выполнили задание на этой неделе"
         )
     
+    # Проверяем, нет ли уже активной заявки на эту категорию ТОП-50
+    if has_pending_application(DB_PATH, user_id, 'top50', category):
+        raise HTTPException(
+            status_code=400,
+            detail="Ваша заявка на получение награды за еженедельное задание ТОП-50 уже отправлена и ожидает рассмотрения модераторами."
+        )
+    
     # Валидация файлов
     media_files = photos or []
 
@@ -4325,6 +4348,9 @@ async def submit_top50_application(
             detail=f"Ошибка обработки изображений: {str(e)}"
         )
     
+    # Добавляем pending запись после успешной отправки заявки
+    add_pending_application(DB_PATH, user_id, 'top50', category)
+    
     return {
         "status": "ok",
         "message": "Заявка успешно отправлена"
@@ -4399,6 +4425,9 @@ async def approve_top50_application(
         traceback.print_exc()
         # Не прерываем выполнение, так как баланс уже обновлен
     
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'top50', category)
+    
     return {
         "status": "ok",
         "success": True,
@@ -4465,6 +4494,9 @@ async def reject_top50_application(
     except Exception as e:
         print(f"ERROR reject_top50_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
         traceback.print_exc()
+    
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'top50', category)
     
     return {
         "status": "ok",
