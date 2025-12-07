@@ -66,6 +66,7 @@ def format_profile_response(profile: Optional[Dict], user_id: int) -> Dict:
         "difficulties": profile.get("difficulties", []),
         "birthday": profile.get("birthday"),
         "avatar_url": profile.get("avatar_url"),
-        "balance": profile.get("balance", 0)
+        "balance": profile.get("balance", 0),
+        "active_theme_key": profile.get("active_theme_key", "default")
     }
 

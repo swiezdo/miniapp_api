@@ -380,7 +380,7 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
                 return None
             
             cursor.execute('''
-                SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties, avatar_url, balance
+                SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties, avatar_url, balance, active_theme_key
                 FROM users WHERE user_id = ?
             ''', (user_id,))
             
@@ -403,7 +403,8 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
                 'difficulties': parse_comma_separated_list(row[6]),
                 'avatar_url': row[7],
                 'birthday': birthday,
-                'balance': row[8] if len(row) > 8 else 0
+                'balance': row[8] if len(row) > 8 else 0,
+                'active_theme_key': row[9] if len(row) > 9 and row[9] else 'default'
             }
             
             return profile
@@ -1214,7 +1215,7 @@ def get_all_users(db_path: str) -> List[Dict[str, Any]]:
                 return []
             
             cursor.execute('''
-                SELECT u.user_id, u.psn_id, u.avatar_url,
+                SELECT u.user_id, u.psn_id, u.avatar_url, u.active_theme_key,
                        COALESCE(m.solo, 0) as solo,
                        COALESCE(m.hellmode, 0) as hellmode,
                        COALESCE(m.raid, 0) as raid,
@@ -1234,12 +1235,13 @@ def get_all_users(db_path: str) -> List[Dict[str, Any]]:
                     'user_id': row[0],
                     'psn_id': row[1],
                     'avatar_url': row[2],
+                    'active_theme_key': row[3] or 'default',  # Если тема не установлена, используем default
                     'mastery': {
-                        'solo': row[3],
-                        'hellmode': row[4],
-                        'raid': row[5],
-                        'speedrun': row[6],
-                        'glitch': row[7]
+                        'solo': row[4],
+                        'hellmode': row[5],
+                        'raid': row[6],
+                        'speedrun': row[7],
+                        'glitch': row[8]
                     }
                 })
             
@@ -3598,5 +3600,256 @@ def has_pending_application(
         
     except sqlite3.Error as e:
         print(f"Ошибка проверки pending заявки: {e}")
+        traceback.print_exc()
+        return False
+
+
+# ============================================
+# Функции для работы с темами профиля
+# ============================================
+
+def get_profile_themes(db_path: str) -> List[Dict[str, Any]]:
+    """
+    Получает список всех доступных тем профиля.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        Список словарей с данными тем
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            cursor.execute('''
+                SELECT theme_key, name, price, css_file, preview_colors, is_default, created_at
+                FROM profile_themes
+                ORDER BY is_default DESC, price ASC, created_at ASC
+            ''')
+            
+            rows = cursor.fetchall()
+            themes = []
+            for row in rows:
+                theme = {
+                    'key': row[0],
+                    'name': row[1],
+                    'price': row[2],
+                    'css_file': row[3],
+                    'colors': json.loads(row[4]) if row[4] else [],
+                    'is_default': bool(row[5]),
+                    'created_at': row[6]
+                }
+                themes.append(theme)
+            
+            return themes
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения списка тем: {e}")
+        traceback.print_exc()
+        return []
+    except json.JSONDecodeError as e:
+        print(f"Ошибка парсинга JSON цветов темы: {e}")
+        return []
+
+
+def get_user_profile_themes(db_path: str, user_id: int) -> List[Dict[str, Any]]:
+    """
+    Получает список купленных тем пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Список словарей с данными купленных тем
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            cursor.execute('''
+                SELECT pt.theme_key, pt.name, pt.price, pt.css_file, pt.preview_colors, 
+                       upt.purchased_at, pt.is_default
+                FROM user_profile_themes upt
+                JOIN profile_themes pt ON upt.theme_key = pt.theme_key
+                WHERE upt.user_id = ?
+                ORDER BY upt.purchased_at DESC
+            ''', (user_id,))
+            
+            rows = cursor.fetchall()
+            themes = []
+            for row in rows:
+                theme = {
+                    'key': row[0],
+                    'name': row[1],
+                    'price': row[2],
+                    'css_file': row[3],
+                    'colors': json.loads(row[4]) if row[4] else [],
+                    'purchased_at': row[5],
+                    'is_default': bool(row[6])
+                }
+                themes.append(theme)
+            
+            return themes
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения купленных тем пользователя: {e}")
+        traceback.print_exc()
+        return []
+    except json.JSONDecodeError as e:
+        print(f"Ошибка парсинга JSON цветов темы: {e}")
+        return []
+
+
+def get_user_active_theme(db_path: str, user_id: int) -> Optional[str]:
+    """
+    Получает активную тему пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Ключ активной темы или None
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('''
+                SELECT active_theme_key FROM users WHERE user_id = ?
+            ''', (user_id,))
+            
+            row = cursor.fetchone()
+            return row[0] if row and row[0] else None
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения активной темы: {e}")
+        traceback.print_exc()
+        return None
+
+
+def check_theme_owned(db_path: str, user_id: int, theme_key: str) -> bool:
+    """
+    Проверяет, владеет ли пользователь темой.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        theme_key: Ключ темы
+    
+    Returns:
+        True если пользователь владеет темой, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем, является ли тема бесплатной (по умолчанию)
+            cursor.execute('''
+                SELECT is_default FROM profile_themes WHERE theme_key = ?
+            ''', (theme_key,))
+            
+            row = cursor.fetchone()
+            if row and row[0]:
+                # Бесплатная тема - все владеют
+                return True
+            
+            # Проверяем, куплена ли тема
+            cursor.execute('''
+                SELECT 1 FROM user_profile_themes 
+                WHERE user_id = ? AND theme_key = ?
+            ''', (user_id, theme_key))
+            
+            return cursor.fetchone() is not None
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка проверки владения темой: {e}")
+        traceback.print_exc()
+        return False
+
+
+def purchase_theme(db_path: str, user_id: int, theme_key: str) -> bool:
+    """
+    Покупает тему для пользователя (без проверки баланса - это делается на уровне API).
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        theme_key: Ключ темы
+    
+    Returns:
+        True при успешной покупке, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем, существует ли тема
+            cursor.execute('''
+                SELECT theme_key FROM profile_themes WHERE theme_key = ?
+            ''', (theme_key,))
+            
+            theme_row = cursor.fetchone()
+            if not theme_row:
+                print(f"Тема {theme_key} не найдена в БД")
+                return False
+            
+            # Проверяем, не куплена ли уже тема
+            if check_theme_owned(db_path, user_id, theme_key):
+                print(f"Пользователь {user_id} уже владеет темой {theme_key}")
+                return False
+            
+            # Добавляем запись о покупке
+            cursor.execute('''
+                INSERT INTO user_profile_themes (user_id, theme_key, purchased_at)
+                VALUES (?, ?, strftime('%s', 'now'))
+            ''', (user_id, theme_key))
+            
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка покупки темы: {e}")
+        traceback.print_exc()
+        return False
+
+
+def activate_theme(db_path: str, user_id: int, theme_key: str) -> bool:
+    """
+    Активирует тему для пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        theme_key: Ключ темы
+    
+    Returns:
+        True при успешной активации, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем, владеет ли пользователь темой
+            if not check_theme_owned(db_path, user_id, theme_key):
+                print(f"Пользователь {user_id} не владеет темой {theme_key}")
+                return False
+            
+            # Активируем тему
+            cursor.execute('''
+                UPDATE users SET active_theme_key = ? WHERE user_id = ?
+            ''', (theme_key, user_id))
+            
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка активации темы: {e}")
         traceback.print_exc()
         return False

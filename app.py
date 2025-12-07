@@ -80,6 +80,12 @@ from db import (
     remove_pending_application,
     get_user_pending_applications,
     has_pending_application,
+    get_profile_themes,
+    get_user_profile_themes,
+    get_user_active_theme,
+    check_theme_owned,
+    purchase_theme,
+    activate_theme,
 )
 from image_utils import (
     process_image_for_upload,
@@ -491,6 +497,11 @@ async def get_users_list(user_id: int = Depends(get_current_user)):
             u['builds_count'] = builds_count
             u['has_public_builds'] = builds_count > 0
             
+            # АКТИВНАЯ ТЕМА - уже есть в данных из get_all_users
+            # Убеждаемся, что поле есть (если нет, используем default)
+            if 'active_theme_key' not in u:
+                u['active_theme_key'] = 'default'
+            
             # ПРОФИЛЬНЫЕ ДАННЫЕ для фильтрации
             # Получаем полный профиль пользователя для извлечения platforms, modes, goals, difficulties
             try:
@@ -528,6 +539,7 @@ async def get_users_list(user_id: int = Depends(get_current_user)):
             u['has_any_trophy'] = u.get('has_any_trophy', False)
             u['has_mastery_progress'] = u.get('has_mastery_progress', False)
             u['builds_count'] = u.get('builds_count', 0)
+            u['active_theme_key'] = u.get('active_theme_key', 'default')
             u['has_public_builds'] = u.get('has_public_builds', False)
             u.pop('mastery', None)
     
@@ -4830,6 +4842,7 @@ async def delete_snippet_endpoint(
 
 # Загружаем конфиг подарков
 GIFTS_CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'gifts.json')
+THEMES_CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'themes.json')
 
 def load_gifts_config() -> List[Dict[str, Any]]:
     """Загружает конфигурацию подарков из JSON файла."""
@@ -4839,6 +4852,34 @@ def load_gifts_config() -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"Ошибка загрузки gifts.json: {e}")
         return []
+
+
+def load_themes_config() -> List[Dict[str, Any]]:
+    """Загружает конфигурацию тем из JSON файла."""
+    try:
+        with open(THEMES_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Ошибка загрузки themes.json: {e}")
+        return []
+
+
+def get_theme_price(theme_key: str) -> Optional[int]:
+    """Получает цену темы по ключу."""
+    themes = load_themes_config()
+    for theme in themes:
+        if theme.get('key') == theme_key:
+            return theme.get('price', 0)
+    return None
+
+
+def get_theme_info(theme_key: str) -> Optional[Dict[str, Any]]:
+    """Получает полную информацию о теме по ключу."""
+    themes = load_themes_config()
+    for theme in themes:
+        if theme.get('key') == theme_key:
+            return theme
+    return None
 
 
 def get_gift_price(gift_key: str) -> Optional[int]:
@@ -5009,6 +5050,247 @@ async def api_send_gift(
         print(f"Ошибка отправки подарка: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Ошибка отправки подарка: {str(e)}")
+
+
+# ============================================
+# API для тем профиля
+# ============================================
+
+@app.get("/api/themes.list")
+async def api_get_themes_list():
+    """
+    Возвращает список всех доступных тем профиля.
+    """
+    try:
+        themes = get_profile_themes(DB_PATH)
+        # Если тем нет в БД, загружаем из JSON
+        if not themes:
+            themes_config = load_themes_config()
+            # Преобразуем формат из JSON в формат БД
+            themes = []
+            for theme in themes_config:
+                themes.append({
+                    'key': theme.get('key'),
+                    'name': theme.get('name'),
+                    'price': theme.get('price', 0),
+                    'css_file': theme.get('css_file', f'themes/{theme.get("key")}.css'),
+                    'colors': theme.get('colors', []),
+                    'is_default': theme.get('is_default', False),
+                    'created_at': None
+                })
+        return {"themes": themes}
+    except Exception as e:
+        print(f"Ошибка получения списка тем: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка получения тем: {str(e)}")
+
+
+@app.get("/api/themes.getUserThemes")
+async def api_get_user_themes(
+    request: Request,
+    x_telegram_init_data: str = Header(None, alias="X-Telegram-Init-Data")
+):
+    """
+    Возвращает список купленных тем пользователя.
+    """
+    try:
+        # Валидируем initData
+        validated_data = validate_init_data(x_telegram_init_data, BOT_TOKEN) if x_telegram_init_data else None
+        if not validated_data:
+            raise HTTPException(status_code=401, detail="Невалидные данные авторизации")
+        
+        user_id = get_user_id_from_init_data(validated_data)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Не удалось получить ID пользователя")
+        
+        themes = get_user_profile_themes(DB_PATH, user_id)
+        return {"themes": themes}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка получения купленных тем: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка получения тем: {str(e)}")
+
+
+@app.get("/api/themes.getActive")
+async def api_get_active_theme(
+    request: Request,
+    x_telegram_init_data: str = Header(None, alias="X-Telegram-Init-Data")
+):
+    """
+    Возвращает активную тему пользователя.
+    """
+    try:
+        # Валидируем initData
+        validated_data = validate_init_data(x_telegram_init_data, BOT_TOKEN) if x_telegram_init_data else None
+        if not validated_data:
+            raise HTTPException(status_code=401, detail="Невалидные данные авторизации")
+        
+        user_id = get_user_id_from_init_data(validated_data)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Не удалось получить ID пользователя")
+        
+        active_theme_key = get_user_active_theme(DB_PATH, user_id)
+        # Если тема не установлена, возвращаем default
+        if not active_theme_key:
+            active_theme_key = "default"
+        
+        return {"theme_key": active_theme_key}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка получения активной темы: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка получения темы: {str(e)}")
+
+
+@app.post("/api/themes.purchase")
+async def api_purchase_theme(
+    request: Request,
+    x_telegram_init_data: str = Header(None, alias="X-Telegram-Init-Data")
+):
+    """
+    Покупает тему для пользователя.
+    Тело запроса: {"theme_key": str}
+    """
+    try:
+        # Валидируем initData
+        validated_data = validate_init_data(x_telegram_init_data, BOT_TOKEN) if x_telegram_init_data else None
+        if not validated_data:
+            raise HTTPException(status_code=401, detail="Невалидные данные авторизации")
+        
+        user_id = get_user_id_from_init_data(validated_data)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Не удалось получить ID пользователя")
+        
+        # Получаем тело запроса
+        body = await request.json()
+        theme_key = body.get("theme_key")
+        
+        if not theme_key:
+            raise HTTPException(status_code=400, detail="Не указан ключ темы")
+        
+        # Проверяем существование темы и получаем её цену
+        theme_price = get_theme_price(theme_key)
+        if theme_price is None:
+            raise HTTPException(status_code=400, detail="Неизвестная тема")
+        
+        # Проверяем, не является ли тема бесплатной
+        theme_info = get_theme_info(theme_key)
+        if theme_info and theme_info.get('is_default', False):
+            raise HTTPException(status_code=400, detail="Эта тема бесплатная и уже доступна")
+        
+        # Проверяем, не куплена ли уже тема
+        if check_theme_owned(DB_PATH, user_id, theme_key):
+            raise HTTPException(status_code=400, detail="Тема уже куплена")
+        
+        # Проверяем баланс пользователя
+        user = get_user(DB_PATH, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        
+        user_balance = user.get('balance', 0)
+        if user_balance < theme_price:
+            raise HTTPException(status_code=400, detail="Недостаточно магатамы")
+        
+        # Списываем магатаму с баланса
+        update_user_balance(DB_PATH, user_id, -theme_price)
+        new_balance = user_balance - theme_price
+        
+        # Покупаем тему
+        try:
+            success = purchase_theme(DB_PATH, user_id, theme_key)
+            
+            if not success:
+                # Возвращаем магатаму если не удалось купить тему
+                update_user_balance(DB_PATH, user_id, theme_price)
+                raise HTTPException(status_code=500, detail="Не удалось купить тему. Возможно, тема уже куплена или не найдена.")
+        except Exception as purchase_error:
+            # Возвращаем магатаму при любой ошибке покупки
+            update_user_balance(DB_PATH, user_id, theme_price)
+            print(f"Ошибка при покупке темы {theme_key} для пользователя {user_id}: {purchase_error}")
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Ошибка покупки темы: {str(purchase_error)}")
+        
+        return {"message": "Тема успешно куплена!", "new_balance": new_balance}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка покупки темы: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка покупки темы: {str(e)}")
+
+
+@app.post("/api/themes.activate")
+async def api_activate_theme(
+    request: Request,
+    x_telegram_init_data: str = Header(None, alias="X-Telegram-Init-Data")
+):
+    """
+    Активирует тему для пользователя.
+    Тело запроса: {"theme_key": str}
+    """
+    try:
+        # Валидируем initData
+        validated_data = validate_init_data(x_telegram_init_data, BOT_TOKEN) if x_telegram_init_data else None
+        if not validated_data:
+            raise HTTPException(status_code=401, detail="Невалидные данные авторизации")
+        
+        user_id = get_user_id_from_init_data(validated_data)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Не удалось получить ID пользователя")
+        
+        # Получаем тело запроса
+        body = await request.json()
+        theme_key = body.get("theme_key")
+        
+        if not theme_key:
+            raise HTTPException(status_code=400, detail="Не указан ключ темы")
+        
+        # Проверяем, владеет ли пользователь темой
+        if not check_theme_owned(DB_PATH, user_id, theme_key):
+            raise HTTPException(status_code=403, detail="Вы не владеете этой темой")
+        
+        # Активируем тему
+        success = activate_theme(DB_PATH, user_id, theme_key)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Ошибка активации темы")
+        
+        return {"message": "Тема успешно активирована!", "theme_key": theme_key}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка активации темы: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка активации темы: {str(e)}")
+
+
+@app.get("/themes/{theme_key}.css")
+async def api_get_theme_css(theme_key: str):
+    """
+    Возвращает CSS файл темы.
+    """
+    try:
+        theme_info = get_theme_info(theme_key)
+        if not theme_info:
+            raise HTTPException(status_code=404, detail="Тема не найдена")
+        
+        css_file = theme_info.get('css_file', f'themes/{theme_key}.css')
+        # Путь к CSS файлу относительно корня фронтенда
+        css_path = os.path.join(os.path.dirname(__file__), '..', 'tsushimaru_app', 'docs', 'css', css_file)
+        
+        if not os.path.exists(css_path):
+            raise HTTPException(status_code=404, detail="CSS файл темы не найден")
+        
+        return FileResponse(css_path, media_type="text/css")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка получения CSS темы: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка получения CSS: {str(e)}")
 
 
 @app.exception_handler(HTTPException)

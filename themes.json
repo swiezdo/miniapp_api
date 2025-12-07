@@ -1,0 +1,19 @@
+[
+  {
+    "key": "default",
+    "name": "По умолчанию",
+    "price": 0,
+    "css_file": "themes/default.css",
+    "colors": ["#6366f1", "#8b5cf6"],
+    "is_default": true
+  },
+  {
+    "key": "orange",
+    "name": "Апельсин",
+    "price": 1000,
+    "css_file": "themes/orange.css",
+    "colors": ["#f59e0b", "#ef4444"],
+    "is_default": false
+  }
+]
+
