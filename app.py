@@ -5062,22 +5062,20 @@ async def api_get_themes_list():
     Возвращает список всех доступных тем профиля.
     """
     try:
-        themes = get_profile_themes(DB_PATH)
-        # Если тем нет в БД, загружаем из JSON
-        if not themes:
-            themes_config = load_themes_config()
-            # Преобразуем формат из JSON в формат БД
-            themes = []
-            for theme in themes_config:
-                themes.append({
-                    'key': theme.get('key'),
-                    'name': theme.get('name'),
-                    'price': theme.get('price', 0),
-                    'css_file': theme.get('css_file', f'themes/{theme.get("key")}.css'),
-                    'colors': theme.get('colors', []),
-                    'is_default': theme.get('is_default', False),
-                    'created_at': None
-                })
+        # Загружаем темы из JSON, так как там есть icon_file
+        themes_config = load_themes_config()
+        themes = []
+        for theme in themes_config:
+            themes.append({
+                'key': theme.get('key'),
+                'name': theme.get('name'),
+                'price': theme.get('price', 0),
+                'css_file': theme.get('css_file', f'themes/{theme.get("key")}.css'),
+                'icon_file': theme.get('icon_file'),
+                'colors': theme.get('colors', []),
+                'is_default': theme.get('is_default', False),
+                'created_at': None
+            })
         return {"themes": themes}
     except Exception as e:
         print(f"Ошибка получения списка тем: {e}")
@@ -5104,6 +5102,12 @@ async def api_get_user_themes(
             raise HTTPException(status_code=401, detail="Не удалось получить ID пользователя")
         
         themes = get_user_profile_themes(DB_PATH, user_id)
+        # Добавляем icon_file из JSON конфига
+        themes_config = load_themes_config()
+        themes_dict = {t.get('key'): t for t in themes_config}
+        for theme in themes:
+            if theme.get('key') in themes_dict:
+                theme['icon_file'] = themes_dict[theme['key']].get('icon_file')
         return {"themes": themes}
     except HTTPException:
         raise
