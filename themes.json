@@ -12,8 +12,63 @@
     "name": "Апельсин",
     "price": 1000,
     "css_file": "themes/orange.css",
-    "colors": ["#f59e0b", "#ef4444"],
+    "colors": ["#f59e0b", "#fbbf24"],
+    "is_default": false
+  },
+  {
+    "key": "ocean",
+    "name": "Океан",
+    "price": 1500,
+    "css_file": "themes/ocean.css",
+    "colors": ["#0ea5e9", "#0284c7"],
+    "is_default": false
+  },
+  {
+    "key": "forest",
+    "name": "Лес",
+    "price": 1200,
+    "css_file": "themes/forest.css",
+    "colors": ["#16a34a", "#15803d"],
+    "is_default": false
+  },
+  {
+    "key": "sunset",
+    "name": "Закат",
+    "price": 1800,
+    "css_file": "themes/sunset.css",
+    "colors": ["#fb7185", "#fda4af"],
+    "is_default": false
+  },
+  {
+    "key": "neon",
+    "name": "Неон",
+    "price": 2000,
+    "css_file": "themes/neon.css",
+    "colors": ["#ec4899", "#f472b6"],
+    "is_default": false
+  },
+  {
+    "key": "fire",
+    "name": "Огонь",
+    "price": 1300,
+    "css_file": "themes/fire.css",
+    "colors": ["#dc2626", "#991b1b"],
+    "is_default": false
+  },
+  {
+    "key": "ice",
+    "name": "Лёд",
+    "price": 1400,
+    "css_file": "themes/ice.css",
+    "colors": ["#94a3b8", "#cbd5e1"],
+    "is_default": false
+  },
+  {
+    "key": "royal",
+    "name": "Королевская",
+    "price": 2500,
+    "css_file": "themes/royal.css",
+    "colors": ["#8b5cf6", "#fbbf24"],
     "is_default": false
   }
 ]
-
