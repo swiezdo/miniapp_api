@@ -2428,6 +2428,15 @@ async def get_recent_events_feed(
             headline = f"{psn_id} получил(а) трофей «{trophy_name}»"
             details = 'Добавлен в коллекцию'
             icon_key = payload.get('trophy_key') or 'trophy'
+        elif event_type == 'hellmode_quest_completed':
+            headline = f"{psn_id} выполнил(а) еженедельное задание"
+            details = "HellMode"
+            icon_key = 'reward'
+        elif event_type == 'top50_quest_completed':
+            category_name = payload.get('category_name') or payload.get('category', 'ТОП-50')
+            headline = f"{psn_id} выполнил(а) еженедельное задание"
+            details = f"ТОП-50 {category_name}"
+            icon_key = 'reward'
         else:
             headline = f"{psn_id} получил(а) новую награду"
             details = ''
@@ -2916,14 +2925,14 @@ async def approve_hellmode_quest_application(
     
     # Получаем информацию о пользователе
     user_profile = get_user(DB_PATH, user_id)
-    
-    # Отмечаем задание как выполненное
-    psn_id_for_quest = user_profile.get('psn_id', '') if user_profile else ''
-    mark_quest_done(DB_PATH, user_id, psn_id_for_quest, 'hellmode')
     if not user_profile:
         raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
     
     psn_id = user_profile.get('psn_id', '')
+    avatar_url = user_profile.get('avatar_url', '')
+    
+    # Отмечаем задание как выполненное
+    mark_quest_done(DB_PATH, user_id, psn_id, 'hellmode')
     
     # Получаем информацию о задании для уведомлений
     map_name = quest.get('map_name', '')
@@ -2956,6 +2965,26 @@ async def approve_hellmode_quest_application(
     
     # Удаляем pending запись
     remove_pending_application(DB_PATH, user_id, 'hellmode_quest', 'hellmode_quest')
+    
+    # Логируем событие выполнения задания HellMode
+    try:
+        log_recent_event(
+            DB_PATH,
+            event_type='hellmode_quest_completed',
+            user_id=user_id,
+            psn_id=psn_id,
+            avatar_url=avatar_url,
+            payload={
+                'quest_type': 'hellmode',
+                'map_name': map_name,
+                'class_name': class_name,
+                'gear_name': gear_name,
+                'emote_name': emote_name,
+                'reward': reward,
+            }
+        )
+    except Exception as log_error:
+        print(f"Не удалось логировать событие задания HellMode: {log_error}")
     
     # Поздравление отправляется из бота, а не из API (как для трофеев)
     
@@ -4418,6 +4447,25 @@ async def approve_top50_application(
     
     # Форматируем название категории
     category_name = format_top50_category_name(category)
+    
+    # Логируем событие выполнения задания ТОП-50
+    avatar_url = user_profile.get('avatar_url', '')
+    try:
+        log_recent_event(
+            DB_PATH,
+            event_type='top50_quest_completed',
+            user_id=user_id,
+            psn_id=psn_id,
+            avatar_url=avatar_url,
+            payload={
+                'quest_type': quest_type,
+                'category': category,
+                'category_name': category_name,
+                'prize': prize,
+            }
+        )
+    except Exception as log_error:
+        print(f"Не удалось логировать событие задания ТОП-50: {log_error}")
     
     # Отправляем уведомление пользователю
     try:
