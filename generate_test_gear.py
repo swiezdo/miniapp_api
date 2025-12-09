@@ -270,10 +270,9 @@ def generate_gear_item(item, category, gear_data):
                 result['perk1'] = random.choice(cursed_perks[item['key']])
                 result['perk2'] = None
         elif result['type'] == 'uncommon':
-            # uncommon: 1 perk из обычного списка
-            if perk_list:
-                result['perk1'] = random.choice(perk_list)
-                result['perk2'] = None
+            # uncommon: нет перков
+            result['perk1'] = None
+            result['perk2'] = None
         elif result['type'] in ['rare', 'epic']:
             # rare/epic: если ki = 120 то 2 перка, иначе 1
             if perk_list:
