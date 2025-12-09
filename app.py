@@ -89,6 +89,7 @@ from db import (
     create_gear_item,
     get_user_gear,
     get_gear_item,
+    delete_gear_item,
 )
 from image_utils import (
     process_image_for_upload,
@@ -5539,6 +5540,63 @@ async def get_my_gear(
         print(f"Ошибка получения снаряжения пользователя: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Ошибка получения снаряжения: {str(e)}")
+
+
+@app.post("/api/gear/disassemble")
+async def disassemble_gear(
+    request: Request,
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Разбирает (продает) предмет снаряжения.
+    
+    Args:
+        request: Request объект с JSON данными (gear_id)
+        user_id: ID пользователя (из dependency)
+    
+    Returns:
+        JSON с результатом операции
+    """
+    try:
+        body = await request.json()
+        gear_id = body.get('gear_id')
+        
+        if not gear_id:
+            raise HTTPException(status_code=400, detail="Отсутствует gear_id")
+        
+        # Получаем предмет для определения типа и цены
+        gear_item = get_gear_item(DB_PATH, gear_id)
+        if not gear_item:
+            raise HTTPException(status_code=404, detail="Предмет не найден")
+        
+        # Проверяем, что предмет принадлежит пользователю
+        if gear_item.get('user_id') != user_id:
+            raise HTTPException(status_code=403, detail="Предмет не принадлежит вам")
+        
+        # Определяем цену разборки
+        gear_type = gear_item.get('type', '')
+        price = 65 if gear_type == 'legendary' else 25
+        
+        # Удаляем предмет
+        if not delete_gear_item(DB_PATH, gear_id, user_id):
+            raise HTTPException(status_code=500, detail="Ошибка удаления предмета")
+        
+        # Зачисляем деньги на счет
+        if not update_user_balance(DB_PATH, user_id, price):
+            raise HTTPException(status_code=500, detail="Ошибка зачисления магатам")
+        
+        return {
+            "status": "ok",
+            "message": f"Предмет разобран. Получено {price} магатам.",
+            "price": price
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка разборки предмета: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка разборки предмета: {str(e)}")
 
 
 @app.exception_handler(HTTPException)

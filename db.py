@@ -3999,3 +3999,37 @@ def get_user_gear(db_path: str, user_id: int) -> List[Dict[str, Any]]:
         print(f"Ошибка получения снаряжения пользователя: {e}")
         traceback.print_exc()
         return []
+
+
+def delete_gear_item(db_path: str, gear_id: int, user_id: int) -> bool:
+    """
+    Удаляет предмет снаряжения пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        gear_id: ID предмета снаряжения
+        user_id: ID пользователя (для проверки владельца)
+    
+    Returns:
+        True если успешно удалено, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем, что предмет принадлежит пользователю
+            cursor.execute('SELECT id FROM gear WHERE id = ? AND user_id = ?', (gear_id, user_id))
+            if not cursor.fetchone():
+                print(f"Предмет {gear_id} не найден или не принадлежит пользователю {user_id}")
+                return False
+            
+            # Удаляем предмет
+            cursor.execute('DELETE FROM gear WHERE id = ? AND user_id = ?', (gear_id, user_id))
+            
+            return True
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка удаления предмета снаряжения: {e}")
+        traceback.print_exc()
+        return False
