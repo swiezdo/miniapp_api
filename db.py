@@ -3853,3 +3853,149 @@ def activate_theme(db_path: str, user_id: int, theme_key: str) -> bool:
         print(f"Ошибка активации темы: {e}")
         traceback.print_exc()
         return False
+
+
+# ========== GEAR FUNCTIONS ==========
+
+def create_gear_item(db_path: str, user_id: int, gear_data: Dict[str, Any]) -> Optional[int]:
+    """
+    Создает новую запись снаряжения в базе данных.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+        gear_data: Словарь с данными снаряжения (type, ki, key, name, prop1, prop1_value, prop2, prop2_value, perk1, perk2)
+    
+    Returns:
+        gear_id созданного снаряжения или None при ошибке
+    """
+    try:
+        with db_connection(db_path, init_if_missing=True) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('''
+                INSERT INTO gear 
+                (user_id, type, ki, key, name, prop1, prop1_value, prop2, prop2_value, perk1, perk2)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id,
+                gear_data.get('type', ''),
+                gear_data.get('ki', 0),
+                gear_data.get('key', ''),
+                gear_data.get('name', ''),
+                gear_data.get('prop1') or None,
+                gear_data.get('prop1_value') or None,
+                gear_data.get('prop2') or None,
+                gear_data.get('prop2_value') or None,
+                gear_data.get('perk1') or None,
+                gear_data.get('perk2') or None
+            ))
+            
+            return cursor.lastrowid
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка создания снаряжения: {e}")
+        traceback.print_exc()
+        return None
+
+
+def get_gear_item(db_path: str, gear_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает снаряжение по gear_id.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        gear_id: ID снаряжения
+    
+    Returns:
+        Словарь с данными снаряжения или None если не найден
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return None
+            
+            cursor.execute('''
+                SELECT id, user_id, type, ki, key, name, prop1, prop1_value, 
+                       prop2, prop2_value, perk1, perk2, created_at
+                FROM gear WHERE id = ?
+            ''', (gear_id,))
+            
+            row = cursor.fetchone()
+            
+            if not row:
+                return None
+            
+            return {
+                'id': row[0],
+                'user_id': row[1],
+                'type': row[2],
+                'ki': row[3],
+                'key': row[4],
+                'name': row[5],
+                'prop1': row[6],
+                'prop1_value': row[7],
+                'prop2': row[8],
+                'prop2_value': row[9],
+                'perk1': row[10],
+                'perk2': row[11],
+                'created_at': row[12]
+            }
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения снаряжения: {e}")
+        traceback.print_exc()
+        return None
+
+
+def get_user_gear(db_path: str, user_id: int) -> List[Dict[str, Any]]:
+    """
+    Получает все снаряжение пользователя.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Список словарей с данными снаряжения, отсортированные по дате создания (новые сначала)
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return []
+            
+            cursor.execute('''
+                SELECT id, user_id, type, ki, key, name, prop1, prop1_value, 
+                       prop2, prop2_value, perk1, perk2, created_at
+                FROM gear 
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            
+            rows = cursor.fetchall()
+            
+            gear_items = []
+            for row in rows:
+                gear_items.append({
+                    'id': row[0],
+                    'user_id': row[1],
+                    'type': row[2],
+                    'ki': row[3],
+                    'key': row[4],
+                    'name': row[5],
+                    'prop1': row[6],
+                    'prop1_value': row[7],
+                    'prop2': row[8],
+                    'prop2_value': row[9],
+                    'perk1': row[10],
+                    'perk2': row[11],
+                    'created_at': row[12]
+                })
+            
+            return gear_items
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка получения снаряжения пользователя: {e}")
+        traceback.print_exc()
+        return []

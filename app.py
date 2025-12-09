@@ -86,6 +86,9 @@ from db import (
     check_theme_owned,
     purchase_theme,
     activate_theme,
+    create_gear_item,
+    get_user_gear,
+    get_gear_item,
 )
 from image_utils import (
     process_image_for_upload,
@@ -5343,6 +5346,79 @@ async def api_get_theme_css(theme_key: str):
         print(f"Ошибка получения CSS темы: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Ошибка получения CSS: {str(e)}")
+
+
+@app.post("/api/gear/create")
+async def create_gear(
+    request: Request,
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Создает новую запись снаряжения в базе данных.
+    
+    Args:
+        request: Request объект с JSON данными снаряжения
+        user_id: ID пользователя (из dependency)
+    
+    Returns:
+        JSON с созданной записью снаряжения (включая ID)
+    """
+    try:
+        body = await request.json()
+        
+        # Валидация обязательных полей
+        required_fields = ['type', 'ki', 'key', 'name', 'prop1', 'prop1_value', 'perk1']
+        for field in required_fields:
+            if field not in body:
+                raise HTTPException(status_code=400, detail=f"Отсутствует обязательное поле: {field}")
+        
+        # Валидация типов данных
+        if not isinstance(body.get('ki'), int) or body.get('ki') < 0:
+            raise HTTPException(status_code=400, detail="Поле 'ki' должно быть неотрицательным целым числом")
+        
+        if not isinstance(body.get('type'), str) or not body.get('type').strip():
+            raise HTTPException(status_code=400, detail="Поле 'type' должно быть непустой строкой")
+        
+        if not isinstance(body.get('key'), str) or not body.get('key').strip():
+            raise HTTPException(status_code=400, detail="Поле 'key' должно быть непустой строкой")
+        
+        if not isinstance(body.get('name'), str) or not body.get('name').strip():
+            raise HTTPException(status_code=400, detail="Поле 'name' должно быть непустой строкой")
+        
+        # Подготавливаем данные для сохранения
+        gear_data = {
+            'type': body.get('type', '').strip(),
+            'ki': int(body.get('ki', 0)),
+            'key': body.get('key', '').strip(),
+            'name': body.get('name', '').strip(),
+            'prop1': body.get('prop1', '').strip() if body.get('prop1') else None,
+            'prop1_value': body.get('prop1_value', '').strip() if body.get('prop1_value') else None,
+            'prop2': body.get('prop2', '').strip() if body.get('prop2') else None,
+            'prop2_value': body.get('prop2_value', '').strip() if body.get('prop2_value') else None,
+            'perk1': body.get('perk1', '').strip() if body.get('perk1') else None,
+            'perk2': body.get('perk2', '').strip() if body.get('perk2') else None
+        }
+        
+        # Создаем запись в БД
+        gear_id = create_gear_item(DB_PATH, user_id, gear_data)
+        
+        if gear_id is None:
+            raise HTTPException(status_code=500, detail="Ошибка при создании снаряжения")
+        
+        # Получаем созданную запись
+        created_gear = get_gear_item(DB_PATH, gear_id)
+        
+        if not created_gear:
+            raise HTTPException(status_code=500, detail="Снаряжение создано, но не удалось получить данные")
+        
+        return created_gear
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка создания снаряжения: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка создания снаряжения: {str(e)}")
 
 
 @app.exception_handler(HTTPException)
