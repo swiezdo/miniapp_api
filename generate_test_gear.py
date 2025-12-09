@@ -22,8 +22,12 @@ DB_PATH = os.getenv("DB_PATH", "/root/miniapp_api/app.db")
 GEAR_JSON_PATH = os.path.join(os.path.dirname(__file__), '..', 'tsushimaru_app', 'docs', 'assets', 'data', 'gear.json')
 
 
-def parse_property(prop_string):
-    """Парсит свойство из формата 'Название|[min, max]|unit' (unit может быть пустым)"""
+def parse_property(prop_string, properties_dict=None):
+    """Парсит свойство из формата 'Название|[min, max]|unit' (unit может быть пустым)
+    
+    Если properties_dict передан и содержит это свойство, использует name из словаря.
+    Иначе использует название из самой строки.
+    """
     if not prop_string or not isinstance(prop_string, str):
         return None
     
@@ -32,7 +36,13 @@ def parse_property(prop_string):
     if not match:
         return None
     
+    # Сначала пытаемся получить name из словаря properties_dict
     name = match.group(1).strip()
+    if properties_dict and prop_string in properties_dict:
+        prop_data = properties_dict[prop_string]
+        if isinstance(prop_data, dict) and 'name' in prop_data:
+            name = prop_data['name']
+    
     min_str = match.group(2)
     max_str = match.group(3)
     min_val = float(min_str)
@@ -149,7 +159,7 @@ def generate_gear_item(item, category, gear_data):
         # ВАЖНО: prop1 обязателен для легендарных предметов
         if prop1_list:
             prop1_key = random.choice(prop1_list)
-            prop1_data = parse_property(prop1_key)
+            prop1_data = parse_property(prop1_key, properties_dict)
             if prop1_data:
                 result['prop1'] = prop1_data['name']
                 max_value = generate_property_value(prop1_data['range'][0], prop1_data['range'][1], True, prop1_data.get('has_decimals', False))
@@ -160,7 +170,7 @@ def generate_gear_item(item, category, gear_data):
             # Исключаем prop1 из списка prop2
             prop1_key = None
             for p in prop1_list:
-                parsed = parse_property(p)
+                parsed = parse_property(p, properties_dict)
                 if parsed and parsed['name'] == result['prop1']:
                     prop1_key = p
                     break
@@ -169,7 +179,7 @@ def generate_gear_item(item, category, gear_data):
             
             if filtered_prop2_list:
                 prop2_key = random.choice(filtered_prop2_list)
-                prop2_data = parse_property(prop2_key)
+                prop2_data = parse_property(prop2_key, properties_dict)
                 if prop2_data:
                     result['prop2'] = prop2_data['name']
                     max_value = generate_property_value(prop2_data['range'][0], prop2_data['range'][1], True, prop2_data.get('has_decimals', False))
@@ -222,7 +232,7 @@ def generate_gear_item(item, category, gear_data):
             max_chance = 0.15 if result['type'] == 'cursed' else 0.30
             use_max = random.random() < max_chance
             prop1_key = random.choice(prop1_list)
-            prop1_data = parse_property(prop1_key)
+            prop1_data = parse_property(prop1_key, properties_dict)
             if prop1_data:
                 result['prop1'] = prop1_data['name']
                 value = generate_property_value(prop1_data['range'][0], prop1_data['range'][1], use_max, prop1_data.get('has_decimals', False))
@@ -235,7 +245,7 @@ def generate_gear_item(item, category, gear_data):
             # Ищем полную строку prop1Key в prop1_list по имени
             prop1_key = None
             for p in prop1_list:
-                parsed = parse_property(p)
+                parsed = parse_property(p, properties_dict)
                 if parsed and parsed['name'] == result['prop1']:
                     prop1_key = p  # Это полная строка вида "Урон в ближнем бою|[5, 12]|%"
                     break
@@ -257,7 +267,7 @@ def generate_gear_item(item, category, gear_data):
                 max_chance = 0.15 if result['type'] == 'cursed' else 0.30
                 use_max = random.random() < max_chance
                 prop2_key = random.choice(filtered_prop2_list)
-                prop2_data = parse_property(prop2_key)
+                prop2_data = parse_property(prop2_key, properties_dict)
                 if prop2_data:
                     result['prop2'] = prop2_data['name']
                     value = generate_property_value(prop2_data['range'][0], prop2_data['range'][1], use_max, prop2_data.get('has_decimals', False))
