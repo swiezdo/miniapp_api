@@ -167,7 +167,7 @@ def generate_gear_item(item, category, gear_data):
         
         # Рандомим prop2 (исключая prop1, максимальное значение)
         if prop2_list and result['prop1']:
-            # Исключаем prop1 из списка prop2
+            # Ищем полную строку prop1_key в prop1_list по имени
             prop1_key = None
             for p in prop1_list:
                 parsed = parse_property(p, properties_dict)
@@ -175,6 +175,7 @@ def generate_gear_item(item, category, gear_data):
                     prop1_key = p
                     break
             
+            # Исключаем из prop2_list ТОЛЬКО найденный prop1_key (если он там есть)
             filtered_prop2_list = [p for p in prop2_list if p != prop1_key] if prop1_key else prop2_list
             
             if filtered_prop2_list:
@@ -241,8 +242,7 @@ def generate_gear_item(item, category, gear_data):
         # Рандомим prop2 только для epic (30% шанс на максимум)
         # ВАЖНО: для epic prop2 обязателен
         if result['type'] == 'epic' and prop2_list and result['prop1']:
-            # Исключаем из prop2_list ТОЛЬКО тот элемент, который совпадает с выбранным prop1
-            # Ищем полную строку prop1Key в prop1_list по имени
+            # Ищем полную строку prop1_key в prop1_list по имени
             prop1_key = None
             for p in prop1_list:
                 parsed = parse_property(p, properties_dict)
