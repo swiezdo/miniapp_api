@@ -33,24 +33,27 @@ def parse_property(prop_string):
         return None
     
     name = match.group(1).strip()
-    min_val = float(match.group(2))
-    max_val = float(match.group(3))
+    min_str = match.group(2)
+    max_str = match.group(3)
+    min_val = float(min_str)
+    max_val = float(max_str)
     unit = match.group(4).strip()  # Может быть пустой строкой
+    
+    # Определяем, есть ли десятичные знаки в исходных строках диапазона
+    has_decimals = '.' in min_str or '.' in max_str
     
     return {
         'name': name,
         'range': [min_val, max_val],
-        'unit': unit
+        'unit': unit,
+        'has_decimals': has_decimals
     }
 
 
-def generate_property_value(min_val, max_val, use_max=False):
+def generate_property_value(min_val, max_val, use_max=False, has_decimals=False):
     """Генерирует значение свойства"""
     if use_max:
         return max_val
-    
-    # Проверяем, есть ли дробная часть
-    has_decimals = (min_val % 1 != 0) or (max_val % 1 != 0)
     
     if has_decimals:
         random_val = random.uniform(min_val, max_val)
@@ -63,7 +66,8 @@ def format_property_value(value, unit):
     """Форматирует значение с единицей"""
     if not unit or unit == '':
         return str(value)
-    return f"{value}{unit}"
+    # Добавляем пробел перед единицей (например, "3.8 сек." вместо "3.8сек.")
+    return f"{value} {unit}"
 
 
 def weighted_random(options):
@@ -148,7 +152,7 @@ def generate_gear_item(item, category, gear_data):
             prop1_data = parse_property(prop1_key)
             if prop1_data:
                 result['prop1'] = prop1_data['name']
-                max_value = generate_property_value(prop1_data['range'][0], prop1_data['range'][1], True)
+                max_value = generate_property_value(prop1_data['range'][0], prop1_data['range'][1], True, prop1_data.get('has_decimals', False))
                 result['prop1_value'] = format_property_value(max_value, prop1_data['unit'])
         
         # Рандомим prop2 (исключая prop1, максимальное значение)
@@ -168,7 +172,7 @@ def generate_gear_item(item, category, gear_data):
                 prop2_data = parse_property(prop2_key)
                 if prop2_data:
                     result['prop2'] = prop2_data['name']
-                    max_value = generate_property_value(prop2_data['range'][0], prop2_data['range'][1], True)
+                    max_value = generate_property_value(prop2_data['range'][0], prop2_data['range'][1], True, prop2_data.get('has_decimals', False))
                     result['prop2_value'] = format_property_value(max_value, prop2_data['unit'])
         
         # Рандомим perk1
@@ -213,14 +217,15 @@ def generate_gear_item(item, category, gear_data):
         elif result['type'] == 'cursed':
             result['ki'] = random.randint(20, 100)
         
-        # Рандомим prop1 (30% шанс на максимум)
+        # Рандомим prop1 (30% шанс на максимум, для cursed - 15%)
         if prop1_list:
-            use_max = random.random() < 0.30
+            max_chance = 0.15 if result['type'] == 'cursed' else 0.30
+            use_max = random.random() < max_chance
             prop1_key = random.choice(prop1_list)
             prop1_data = parse_property(prop1_key)
             if prop1_data:
                 result['prop1'] = prop1_data['name']
-                value = generate_property_value(prop1_data['range'][0], prop1_data['range'][1], use_max)
+                value = generate_property_value(prop1_data['range'][0], prop1_data['range'][1], use_max, prop1_data.get('has_decimals', False))
                 result['prop1_value'] = format_property_value(value, prop1_data['unit'])
         
         # Рандомим prop2 только для epic (30% шанс на максимум)
@@ -249,12 +254,13 @@ def generate_gear_item(item, category, gear_data):
             
             # Генерируем prop2
             if filtered_prop2_list:
-                use_max = random.random() < 0.30
+                max_chance = 0.15 if result['type'] == 'cursed' else 0.30
+                use_max = random.random() < max_chance
                 prop2_key = random.choice(filtered_prop2_list)
                 prop2_data = parse_property(prop2_key)
                 if prop2_data:
                     result['prop2'] = prop2_data['name']
-                    value = generate_property_value(prop2_data['range'][0], prop2_data['range'][1], use_max)
+                    value = generate_property_value(prop2_data['range'][0], prop2_data['range'][1], use_max, prop2_data.get('has_decimals', False))
                     result['prop2_value'] = format_property_value(value, prop2_data['unit'])
         
         # Рандомим perk

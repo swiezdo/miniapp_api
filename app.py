@@ -5421,6 +5421,126 @@ async def create_gear(
         raise HTTPException(status_code=500, detail=f"Ошибка создания снаряжения: {str(e)}")
 
 
+@app.post("/api/gear/purchase")
+async def purchase_gear(
+    request: Request,
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Покупает предмет снаряжения.
+    
+    Args:
+        request: Request объект с JSON данными (gear_key, category)
+        user_id: ID пользователя (из dependency)
+    
+    Returns:
+        JSON с созданной записью снаряжения
+    """
+    try:
+        body = await request.json()
+        
+        gear_key = body.get('gear_key')
+        category = body.get('category')
+        
+        if not gear_key or not category:
+            raise HTTPException(status_code=400, detail="Отсутствуют обязательные поля: gear_key, category")
+        
+        # Загружаем gear.json
+        gear_json_path = os.path.join(os.path.dirname(__file__), '..', 'tsushimaru_app', 'docs', 'assets', 'data', 'gear.json')
+        if not os.path.exists(gear_json_path):
+            raise HTTPException(status_code=500, detail="Файл gear.json не найден")
+        
+        with open(gear_json_path, 'r', encoding='utf-8') as f:
+            gear_data = json.load(f)
+        
+        # Находим предмет по ключу и категории
+        item = None
+        for section in gear_data:
+            if section.get('category') == category and 'items' in section:
+                for gear_item in section['items']:
+                    if gear_item.get('key') == gear_key:
+                        item = gear_item
+                        break
+                if item:
+                    break
+        
+        if not item:
+            raise HTTPException(status_code=404, detail="Предмет не найден")
+        
+        # Определяем цену
+        price = 80 if item.get('isLegendary') == 1 else 30
+        
+        # Проверяем баланс пользователя
+        user = get_user(DB_PATH, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        
+        current_balance = user.get('balance', 0)
+        if current_balance < price:
+            raise HTTPException(status_code=400, detail=f"Недостаточно магатам. Требуется: {price}, доступно: {current_balance}")
+        
+        # Импортируем функции генерации из generate_test_gear
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from generate_test_gear import generate_gear_item
+        
+        # Генерируем предмет
+        generated_gear = generate_gear_item(item, category, gear_data)
+        if not generated_gear:
+            raise HTTPException(status_code=500, detail="Ошибка генерации предмета")
+        
+        # Списываем баланс (используем отрицательное значение)
+        if not update_user_balance(DB_PATH, user_id, -price):
+            raise HTTPException(status_code=500, detail="Ошибка списания баланса")
+        
+        # Сохраняем предмет в БД
+        gear_id = create_gear_item(DB_PATH, user_id, generated_gear)
+        if not gear_id:
+            # Если не удалось сохранить, возвращаем баланс
+            update_user_balance(DB_PATH, user_id, price)
+            raise HTTPException(status_code=500, detail="Ошибка сохранения предмета")
+        
+        # Получаем созданную запись
+        created_gear = get_gear_item(DB_PATH, gear_id)
+        if not created_gear:
+            raise HTTPException(status_code=500, detail="Предмет создан, но не удалось получить данные")
+        
+        return {
+            "status": "ok",
+            "message": "Предмет успешно куплен",
+            "gear_item": created_gear
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка покупки предмета: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка покупки предмета: {str(e)}")
+
+
+@app.get("/api/gear/my")
+async def get_my_gear(
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Получает все купленное снаряжение пользователя.
+    
+    Args:
+        user_id: ID пользователя (из dependency)
+    
+    Returns:
+        JSON со списком снаряжения пользователя
+    """
+    try:
+        gear_items = get_user_gear(DB_PATH, user_id)
+        return {"status": "ok", "gear_items": gear_items}
+    except Exception as e:
+        print(f"Ошибка получения снаряжения пользователя: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка получения снаряжения: {str(e)}")
+
+
 @app.exception_handler(HTTPException)
 async def cors_exception_handler(request, exc):
     return JSONResponse(
