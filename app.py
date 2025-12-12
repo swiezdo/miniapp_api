@@ -5506,6 +5506,309 @@ async def create_gear(
         raise HTTPException(status_code=500, detail=f"Ошибка создания снаряжения: {str(e)}")
 
 
+# ========== GEAR RANDOMIZER FUNCTIONS ==========
+
+def parse_property(prop_string: str, properties_dict: Optional[Dict] = None) -> Optional[Dict]:
+    """
+    Парсит свойство из формата "Название|[min, max]|unit" в объект
+    """
+    if not prop_string or not isinstance(prop_string, str):
+        return None
+    
+    # Формат: "Название|[min, max]|unit"
+    match = re.match(r'^(.+?)\|\[([\d.]+),\s*([\d.]+)\]\|(.*)$', prop_string)
+    if not match:
+        return None
+    
+    name = match.group(1).strip()
+    min_str = match.group(2)
+    max_str = match.group(3)
+    try:
+        min_val = float(min_str)
+        max_val = float(max_str)
+    except ValueError:
+        return None
+    
+    # Если передан словарь свойств и в нем есть это свойство, используем name из словаря
+    if properties_dict and prop_string in properties_dict:
+        prop_info = properties_dict[prop_string]
+        if isinstance(prop_info, dict) and 'name' in prop_info:
+            name = prop_info['name']
+    
+    # Проверяем, был ли диапазон указан с точкой (дробный)
+    has_decimals = '.' in min_str or '.' in max_str
+    
+    return {
+        'name': name,
+        'range': [min_val, max_val],
+        'unit': match.group(4).strip(),
+        'has_decimals': has_decimals
+    }
+
+
+def generate_property_value(min_val: float, max_val: float, use_max: bool = False, has_decimals: bool = False) -> float:
+    """
+    Генерирует случайное значение из диапазона
+    """
+    import random
+    
+    if use_max:
+        return max_val
+    
+    if has_decimals:
+        # Для дробных значений генерируем случайное число с одной цифрой после точки
+        random_val = random.uniform(min_val, max_val)
+        return round(random_val, 1)
+    else:
+        # Для целых значений
+        return random.randint(int(min_val), int(max_val))
+
+
+def format_property_value(value: float, unit: str) -> str:
+    """
+    Форматирует значение свойства с единицей измерения
+    """
+    if not unit or unit == '':
+        return str(value)
+    return f"{value} {unit}"
+
+
+def get_random_element(array: List) -> Any:
+    """
+    Получает случайный элемент из массива
+    """
+    import random
+    if not array or len(array) == 0:
+        return None
+    return random.choice(array)
+
+
+def get_random_element_excluding(array: List, exclude: List) -> Any:
+    """
+    Получает случайный элемент из массива, исключая указанные элементы
+    """
+    if not array or len(array) == 0:
+        return None
+    filtered = [item for item in array if item not in exclude]
+    if len(filtered) == 0:
+        return None
+    return get_random_element(filtered)
+
+
+def weighted_random(options: List[Dict]) -> Any:
+    """
+    Генерирует случайное число с заданной вероятностью
+    """
+    import random
+    total = sum(opt['probability'] for opt in options)
+    random_val = random.random() * total
+    
+    for option in options:
+        random_val -= option['probability']
+        if random_val <= 0:
+            return option['value']
+    
+    return options[-1]['value']
+
+
+def generate_gear_item(item_key: str, category: str, gear_data: List[Dict]) -> Optional[Dict]:
+    """
+    Генерирует снаряжение с рандомными свойствами
+    """
+    if not item_key or not category or not gear_data:
+        print('generate_gear_item: Недостаточно параметров')
+        return None
+    
+    # Находим предмет в данных
+    item = None
+    properties_dict = None
+    cursed_perks = None
+    legendary_charm_props = None
+    
+    # Ищем словарь свойств
+    for section in gear_data:
+        if '_properties' in section:
+            properties_dict = section['_properties']
+        if 'cursed_gear_perks' in section:
+            cursed_perks = section['cursed_gear_perks']
+        if 'legendary_charm_class_props' in section:
+            legendary_charm_props = section['legendary_charm_class_props']
+        if section.get('category') == category and 'items' in section:
+            for gear_item in section['items']:
+                if gear_item.get('key') == item_key:
+                    item = gear_item
+                    break
+            if item:
+                break
+    
+    if not item:
+        print(f'generate_gear_item: Предмет {item_key} не найден в категории {category}')
+        return None
+    
+    if not properties_dict:
+        print('generate_gear_item: Словарь свойств не найден')
+        return None
+    
+    is_legendary = item.get('isLegendary') == 1
+    result = {
+        'key': item.get('key'),
+        'name': item.get('name'),
+        'type': None,
+        'ki': None,
+        'prop1': None,
+        'prop1_value': None,
+        'prop2': None,
+        'prop2_value': None,
+        'perk1': None,
+        'perk2': None
+    }
+    
+    # Подготовка списков свойств и перков
+    prop1_list = list(item.get('prop1', []))
+    prop2_list = list(item.get('prop2', []))
+    perk_list = list(item.get('perk', []))
+    
+    # Для легендарных оберегов добавляем свойства класса
+    if is_legendary and category == 'charm' and legendary_charm_props:
+        classes = list(legendary_charm_props.keys())
+        selected_class = get_random_element(classes)
+        class_props = legendary_charm_props[selected_class]
+        
+        if class_props.get('prop1') and len(class_props['prop1']) > 0:
+            prop1_list = prop1_list + class_props['prop1']
+        if class_props.get('prop2') and len(class_props['prop2']) > 0:
+            prop2_list = prop2_list + class_props['prop2']
+        if class_props.get('perk') and len(class_props['perk']) > 0:
+            perk_list = perk_list + class_props['perk']
+    
+    if is_legendary:
+        # ЛЕГЕНДАРНЫЕ ПРЕДМЕТЫ
+        result['type'] = 'legendary'
+        
+        # Рандомим ki: 80, 110 или 120 (полный рандом)
+        result['ki'] = get_random_element([80, 110, 120])
+        
+        # Рандомим prop1 (максимальное значение)
+        if len(prop1_list) > 0:
+            prop1_key = get_random_element(prop1_list)
+            prop1_data = parse_property(prop1_key, properties_dict)
+            if prop1_data:
+                result['prop1'] = prop1_data['name']
+                max_value = generate_property_value(prop1_data['range'][0], prop1_data['range'][1], True, prop1_data['has_decimals'])
+                result['prop1_value'] = format_property_value(max_value, prop1_data['unit'])
+        
+        # Рандомим prop2 (исключая prop1, максимальное значение)
+        if len(prop2_list) > 0 and result['prop1']:
+            # Ищем полную строку prop1Key в prop1List по имени
+            prop1_key = None
+            for p in prop1_list:
+                parsed = parse_property(p, properties_dict)
+                if parsed and parsed['name'] == result['prop1']:
+                    prop1_key = p
+                    break
+            
+            # Исключаем из prop2List ТОЛЬКО найденный prop1Key (если он там есть)
+            filtered_prop2_list = [p for p in prop2_list if p != prop1_key] if prop1_key else prop2_list
+            
+            if len(filtered_prop2_list) > 0:
+                prop2_key = get_random_element(filtered_prop2_list)
+                prop2_data = parse_property(prop2_key, properties_dict)
+                if prop2_data:
+                    result['prop2'] = prop2_data['name']
+                    max_value = generate_property_value(prop2_data['range'][0], prop2_data['range'][1], True, prop2_data['has_decimals'])
+                    result['prop2_value'] = format_property_value(max_value, prop2_data['unit'])
+        
+        # Рандомим perk1
+        if len(perk_list) > 0:
+            result['perk1'] = get_random_element(perk_list)
+        
+        # Рандомим perk2 если ki = 120
+        if result['ki'] == 120 and len(perk_list) > 1:
+            result['perk2'] = get_random_element_excluding(perk_list, [result['perk1']])
+        
+    else:
+        # НЕЛЕГЕНДАРНЫЕ ПРЕДМЕТЫ
+        # Рандомим type: uncommon (30%), rare (30%), epic (30%), cursed (10%)
+        result['type'] = weighted_random([
+            {'value': 'uncommon', 'probability': 0.30},
+            {'value': 'rare', 'probability': 0.30},
+            {'value': 'epic', 'probability': 0.30},
+            {'value': 'cursed', 'probability': 0.10}
+        ])
+        
+        # Рандомим ki в зависимости от type (полный рандом)
+        if result['type'] == 'uncommon':
+            # uncommon: 35 или 80
+            result['ki'] = get_random_element([35, 80])
+        elif result['type'] == 'rare':
+            # rare: 35, 80 или 105
+            result['ki'] = get_random_element([35, 80, 105])
+        elif result['type'] == 'epic':
+            # epic: 80, 105, 110 или 120
+            result['ki'] = get_random_element([80, 105, 110, 120])
+        elif result['type'] == 'cursed':
+            # cursed: случайное целое от 20 до 100
+            import random
+            result['ki'] = random.randint(20, 100)
+        
+        # Рандомим prop1 (полный рандом, не максимум)
+        if len(prop1_list) > 0:
+            prop1_key = get_random_element(prop1_list)
+            prop1_data = parse_property(prop1_key, properties_dict)
+            if prop1_data:
+                result['prop1'] = prop1_data['name']
+                value = generate_property_value(prop1_data['range'][0], prop1_data['range'][1], False, prop1_data['has_decimals'])
+                result['prop1_value'] = format_property_value(value, prop1_data['unit'])
+        
+        # Рандомим prop2 только для epic (полный рандом, не максимум)
+        # ВАЖНО: для epic prop2 обязателен
+        if result['type'] == 'epic' and len(prop2_list) > 0 and result['prop1']:
+            # Ищем полную строку prop1Key в prop1List по имени
+            prop1_key = None
+            for p in prop1_list:
+                parsed = parse_property(p, properties_dict)
+                if parsed and parsed['name'] == result['prop1']:
+                    prop1_key = p
+                    break
+            
+            # Исключаем из prop2List ТОЛЬКО найденный prop1Key (если он там есть)
+            filtered_prop2_list = [p for p in prop2_list if p != prop1_key] if prop1_key else prop2_list
+            
+            # Для epic prop2 обязателен, поэтому если после фильтрации список пуст, используем весь prop2List
+            if len(filtered_prop2_list) == 0:
+                filtered_prop2_list = prop2_list
+            
+            # Генерируем prop2 (полный рандом, не максимум)
+            if len(filtered_prop2_list) > 0:
+                prop2_key = get_random_element(filtered_prop2_list)
+                prop2_data = parse_property(prop2_key, properties_dict)
+                if prop2_data:
+                    result['prop2'] = prop2_data['name']
+                    value = generate_property_value(prop2_data['range'][0], prop2_data['range'][1], False, prop2_data['has_decimals'])
+                    result['prop2_value'] = format_property_value(value, prop2_data['unit'])
+        
+        # Рандомим perk
+        if result['type'] == 'cursed':
+            # cursed: только из cursed_gear_perks
+            if cursed_perks and item_key in cursed_perks and len(cursed_perks[item_key]) > 0:
+                result['perk1'] = get_random_element(cursed_perks[item_key])
+                result['perk2'] = None
+        elif result['type'] == 'uncommon':
+            # uncommon: нет перков
+            result['perk1'] = None
+            result['perk2'] = None
+        elif result['type'] == 'rare' or result['type'] == 'epic':
+            # rare/epic: если ki = 120 то 2 перка, иначе 1
+            if len(perk_list) > 0:
+                result['perk1'] = get_random_element(perk_list)
+                if result['ki'] == 120 and len(perk_list) > 1:
+                    result['perk2'] = get_random_element_excluding(perk_list, [result['perk1']])
+                else:
+                    result['perk2'] = None
+    
+    return result
+
+
 @app.post("/api/gear/purchase")
 async def purchase_gear(
     request: Request,
@@ -5564,13 +5867,8 @@ async def purchase_gear(
         if current_balance < price:
             raise HTTPException(status_code=400, detail=f"Недостаточно магатам. Требуется: {price}, доступно: {current_balance}")
         
-        # Импортируем функции генерации из generate_test_gear
-        import sys
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from generate_test_gear import generate_gear_item
-        
         # Генерируем предмет
-        generated_gear = generate_gear_item(item, category, gear_data)
+        generated_gear = generate_gear_item(gear_key, category, gear_data)
         if not generated_gear:
             raise HTTPException(status_code=500, detail="Ошибка генерации предмета")
         
