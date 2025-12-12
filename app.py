@@ -2476,6 +2476,23 @@ async def approve_trophy_application(
     # Удаляем pending запись
     remove_pending_application(DB_PATH, user_id, 'trophy', trophy_key)
     
+    # Логируем событие получения трофея
+    try:
+        log_recent_event(
+            DB_PATH,
+            event_type='trophy_award',
+            user_id=user_id,
+            psn_id=psn_id,
+            avatar_url=avatar_url,
+            payload={
+                'trophy_key': trophy_key,
+                'trophy_name': trophy_name,
+                'moderator': moderator_username,
+            }
+        )
+    except Exception as log_error:
+        print(f"Не удалось логировать событие трофея: {log_error}")
+    
     return {
         "status": "ok",
         "success": True,
