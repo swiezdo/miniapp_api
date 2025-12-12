@@ -1679,6 +1679,90 @@ async def get_user_info(user_id: int):
     except Exception as e:
         raise HTTPException(status_code=404, detail="User not found")
 
+
+@app.post("/api/transfer")
+async def transfer_money(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Переводит магатаму с баланса отправителя на баланс получателя.
+    Вызывается ботом при команде !перевести.
+    Тело запроса: {"sender_id": int, "recipient_id": int, "amount": int}
+    """
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    try:
+        # Получаем тело запроса
+        body = await request.json()
+        sender_id = body.get("sender_id")
+        recipient_id = body.get("recipient_id")
+        amount = body.get("amount")
+        
+        # Валидация параметров
+        if sender_id is None or recipient_id is None or amount is None:
+            raise HTTPException(status_code=400, detail="Не указаны обязательные параметры: sender_id, recipient_id, amount")
+        
+        if not isinstance(sender_id, int) or not isinstance(recipient_id, int) or not isinstance(amount, int):
+            raise HTTPException(status_code=400, detail="Параметры должны быть целыми числами")
+        
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="Сумма должна быть положительным числом")
+        
+        if sender_id == recipient_id:
+            raise HTTPException(status_code=400, detail="Нельзя перевести самому себе")
+        
+        # Проверяем существование отправителя
+        sender = get_user(DB_PATH, sender_id)
+        if not sender:
+            raise HTTPException(status_code=404, detail="Отправитель не найден")
+        
+        # Проверяем существование получателя
+        recipient = get_user(DB_PATH, recipient_id)
+        if not recipient:
+            raise HTTPException(status_code=404, detail="Получатель не найден")
+        
+        # Проверяем баланс отправителя
+        sender_balance = sender.get('balance', 0)
+        if sender_balance < amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Недостаточно магатамы. Ваш баланс: {sender_balance}, требуется: {amount}"
+            )
+        
+        # Выполняем перевод: списываем с отправителя
+        if not update_user_balance(DB_PATH, sender_id, -amount):
+            raise HTTPException(status_code=500, detail="Ошибка списания баланса отправителя")
+        
+        # Добавляем получателю
+        if not update_user_balance(DB_PATH, recipient_id, amount):
+            # Если не удалось добавить получателю, возвращаем деньги отправителю
+            update_user_balance(DB_PATH, sender_id, amount)
+            raise HTTPException(status_code=500, detail="Ошибка зачисления баланса получателю")
+        
+        # Получаем обновленные балансы
+        updated_sender = get_user(DB_PATH, sender_id)
+        updated_recipient = get_user(DB_PATH, recipient_id)
+        
+        sender_new_balance = updated_sender.get('balance', 0) if updated_sender else sender_balance - amount
+        recipient_new_balance = updated_recipient.get('balance', 0) if updated_recipient else (recipient.get('balance', 0) + amount)
+        
+        return {
+            "success": True,
+            "sender_balance": sender_new_balance,
+            "recipient_balance": recipient_new_balance,
+            "amount": amount
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка при переводе: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка при переводе: {str(e)}")
+
+
 # ========== API ЭНДПОИНТЫ ДЛЯ ТРОФЕЕВ ==========
 
 # Удалены эндпоинты отправки заявок на трофеи
