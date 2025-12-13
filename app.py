@@ -5941,6 +5941,31 @@ async def get_my_gear(
         raise HTTPException(status_code=500, detail=f"Ошибка получения снаряжения: {str(e)}")
 
 
+@app.get("/api/gear/user/{target_user_id}")
+async def get_user_gear_by_id(
+    target_user_id: int,
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Получает снаряжение конкретного пользователя.
+    Доступно для всех авторизованных пользователей.
+    
+    Args:
+        target_user_id: ID пользователя, снаряжение которого нужно получить
+        user_id: ID текущего пользователя (из dependency, для авторизации)
+    
+    Returns:
+        JSON со списком снаряжения пользователя
+    """
+    try:
+        gear_items = get_user_gear(DB_PATH, target_user_id)
+        return {"status": "ok", "gear_items": gear_items}
+    except Exception as e:
+        print(f"Ошибка получения снаряжения пользователя {target_user_id}: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка получения снаряжения: {str(e)}")
+
+
 @app.post("/api/gear/disassemble")
 async def disassemble_gear(
     request: Request,
