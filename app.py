@@ -56,10 +56,13 @@ from db import (
     get_upcoming_birthdays,
     get_today_birthdays,
     get_current_hellmode_quest,
+    get_additional_hellmode_quest,
     update_user_balance,
+    update_user_purified,
     is_quest_done,
     mark_quest_done,
     get_user_quests_status,
+    calculate_additional_quest_reward,
     reset_weekly_quests,
     get_notification_subscribers,
     get_user_notifications,
@@ -732,15 +735,35 @@ async def get_current_rotation():
 @app.get("/api/quests.hellmode")
 async def get_hellmode_quest():
     """
-    Возвращает текущее задание HellMode.
+    Возвращает текущее еженедельное задание HellMode.
     """
-    quest = get_current_hellmode_quest(DB_PATH)
+    quest = get_current_hellmode_quest(DB_PATH, quest_id=1)
     
     if quest is None:
         raise HTTPException(status_code=404, detail="Задание не найдено")
     
     # Добавляем константу proof к ответу
     quest['proof'] = HELLMODE_PROOF
+    
+    return quest
+
+
+@app.get("/api/quests.additionalHellmode")
+async def get_additional_hellmode_quest_endpoint(user_id: int = Depends(get_current_user)):
+    """
+    Возвращает дополнительное задание HellMode и рассчитывает награду для пользователя.
+    """
+    quest = get_additional_hellmode_quest(DB_PATH)
+    
+    if quest is None:
+        raise HTTPException(status_code=404, detail="Дополнительное задание не найдено")
+    
+    # Рассчитываем награду для текущего пользователя
+    purified_reward = calculate_additional_quest_reward(DB_PATH, user_id)
+    
+    # Добавляем константу proof и награду к ответу
+    quest['proof'] = HELLMODE_PROOF
+    quest['purified_reward'] = purified_reward
     
     return quest
 
@@ -762,8 +785,13 @@ async def get_quests_status(user_id: int = Depends(get_current_user)):
             "story": False,
             "survival": False,
             "trials": False,
-            "all_completed": 0
+            "all_completed": 0,
+            "additional_hellmode": False
         }
+    
+    # Убеждаемся, что additional_hellmode присутствует
+    if 'additional_hellmode' not in status:
+        status['additional_hellmode'] = False
     
     return status
 
@@ -2537,6 +2565,10 @@ async def get_recent_events_feed(
             headline = f"{psn_id} выполнил(а) еженедельное задание"
             details = "HellMode"
             icon_key = 'reward'
+        elif event_type == 'additional_hellmode_quest_completed':
+            headline = f"{psn_id} выполнил(а) дополнительное задание"
+            details = "HellMode (Доп.)"
+            icon_key = 'reward'
         elif event_type == 'top50_quest_completed':
             category_name = payload.get('category_name') or payload.get('category', 'ТОП-50')
             headline = f"{psn_id} выполнил(а) еженедельное задание"
@@ -2825,8 +2857,8 @@ async def submit_hellmode_quest_application(
     # Получаем профиль пользователя для получения psn_id
     user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
     
-    # Получаем текущее задание
-    quest = get_current_hellmode_quest(DB_PATH)
+    # Получаем текущее еженедельное задание
+    quest = get_current_hellmode_quest(DB_PATH, quest_id=1)
     if not quest:
         raise HTTPException(
             status_code=400,
@@ -3013,8 +3045,8 @@ async def approve_hellmode_quest_application(
     if not verify_bot_authorization(authorization):
         raise HTTPException(status_code=401, detail="Неавторизованный запрос")
     
-    # Получаем текущее задание
-    quest = get_current_hellmode_quest(DB_PATH)
+    # Получаем текущее еженедельное задание
+    quest = get_current_hellmode_quest(DB_PATH, quest_id=1)
     if not quest:
         raise HTTPException(status_code=400, detail="Текущее задание HellMode не найдено")
     
@@ -3118,7 +3150,7 @@ async def reject_hellmode_quest_application(
         raise HTTPException(status_code=401, detail="Неавторизованный запрос")
     
     # Получаем текущее задание для информации в уведомлении
-    quest = get_current_hellmode_quest(DB_PATH)
+    quest = get_current_hellmode_quest(DB_PATH, quest_id=1)
     
     # Получаем информацию о пользователе
     user_profile = get_user(DB_PATH, user_id)
@@ -3157,6 +3189,370 @@ async def reject_hellmode_quest_application(
     
     # Удаляем pending запись
     remove_pending_application(DB_PATH, user_id, 'hellmode_quest', 'hellmode_quest')
+    
+    return {
+        "status": "ok",
+        "success": True
+    }
+
+
+@app.post("/api/hellmodeQuest.additional.submit")
+async def submit_additional_hellmode_quest_application(
+    user_id: int = Depends(get_current_user),
+    comment: Optional[str] = Form(default=None),
+    photos: Optional[List[UploadFile]] = File(default=None)
+):
+    """
+    Отправляет заявку на выполнение дополнительного задания HellMode в админскую группу.
+    """
+    # Получаем профиль пользователя для получения psn_id
+    user_profile, psn_id = get_user_with_psn(DB_PATH, user_id)
+    
+    # Получаем дополнительное задание
+    quest = get_additional_hellmode_quest(DB_PATH)
+    if not quest:
+        raise HTTPException(
+            status_code=400,
+            detail="Дополнительное задание HellMode не найдено"
+        )
+    
+    # Проверяем, не выполнено ли уже задание на этой неделе
+    if is_quest_done(DB_PATH, user_id, 'additional_hellmode'):
+        raise HTTPException(
+            status_code=400,
+            detail="Вы уже выполнили дополнительное задание на этой неделе"
+        )
+    
+    # Проверяем, нет ли уже активной заявки на это задание
+    if has_pending_application(DB_PATH, user_id, 'additional_hellmode_quest', 'additional_hellmode_quest'):
+        raise HTTPException(
+            status_code=400,
+            detail="Ваша заявка на получение награды за дополнительное задание HellMode уже отправлена и ожидает рассмотрения модераторами."
+        )
+    
+    # Рассчитываем награду для пользователя
+    purified_reward = calculate_additional_quest_reward(DB_PATH, user_id)
+    
+    # Валидация
+    media_files = photos or []
+
+    if len(media_files) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Необходимо прикрепить хотя бы один файл (изображение или видео)"
+        )
+    
+    if len(media_files) > MAX_MEDIA_ATTACHMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Можно прикрепить не более {MAX_MEDIA_ATTACHMENTS} файлов"
+        )
+    
+    normalized_media = []
+    for upload in media_files:
+        media_kind = detect_media_type(upload)
+        if media_kind not in {'photo', 'video'}:
+            raise HTTPException(
+                status_code=400,
+                detail="Разрешены только изображения и видео (MP4, MOV)."
+            )
+        normalized_media.append((upload, media_kind))
+    
+    # Формируем сообщение для группы
+    map_name = quest.get('map_name', '')
+    class_name = quest.get('class_name', '')
+    gear_name = quest.get('gear_name', '')
+    emote_name = quest.get('emote_name', '')
+    reward = quest.get('reward', 0)
+    
+    comment_text = comment.strip() if comment and comment.strip() else "Без комментария"
+    
+    message_text = f"""🎯 <b>Заявка на дополнительное задание HellMode</b>
+
+👤 <b>PSN ID:</b> {psn_id}
+🗺️ <b>Карта:</b> {map_name}
+⚔️ <b>Класс:</b> {class_name}
+🛡️ <b>Орудие:</b> {gear_name}
+😊 <b>Эмоция:</b> {emote_name}
+💰 <b>Награда:</b> {reward} Магатама
+💎 <b>Дополнительно:</b> {purified_reward} Очищенное снаряжение
+
+💬 <b>Комментарий:</b> {comment_text}"""
+    
+    # Создаем inline кнопки
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "Одобрить",
+                    "callback_data": f"approve_additionalHellmodeQuest:{user_id}"
+                },
+                {
+                    "text": "Отклонить",
+                    "callback_data": f"reject_additionalHellmodeQuest:{user_id}"
+                }
+            ]
+        ]
+    }
+    
+    # Валидация переменных окружения перед отправкой
+    if not BOT_TOKEN:
+        raise HTTPException(
+            status_code=500,
+            detail="BOT_TOKEN не настроен. Обратитесь к администратору."
+        )
+    if not TROPHY_GROUP_CHAT_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="TROPHY_GROUP_CHAT_ID не настроен. Обратитесь к администратору."
+        )
+    if not TROPHY_GROUP_TOPIC_ID:
+        print(f"WARNING: TROPHY_GROUP_TOPIC_ID не установлен. Заявка будет отправлена без указания темы.")
+    
+    # Обрабатываем и отправляем фотографии
+    try:
+        with temp_image_directory(prefix='additional_hellmode_quest_app_') as temp_dir:
+            media_payload = []
+            
+            for index, (upload, media_kind) in enumerate(normalized_media, start=1):
+                if media_kind == 'photo':
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+
+                    photo_path = os.path.join(temp_dir, f'media_{index}.jpg')
+                    image = Image.open(upload.file)
+                    process_image_for_upload(image, photo_path)
+                    media_payload.append({
+                        "type": "photo",
+                        "path": photo_path,
+                    })
+
+                    try:
+                        upload.file.seek(0)
+                    except Exception:
+                        pass
+                else:
+                    extension = guess_media_extension(upload, default='.mp4')
+                    if not extension.startswith('.'):
+                        extension = f'.{extension}'
+
+                    video_path = os.path.join(temp_dir, f'media_{index}{extension}')
+                    save_upload_file(upload, video_path)
+                    media_payload.append({
+                        "type": "video",
+                        "path": video_path,
+                    })
+            
+            # Отправляем уведомление в группу с message_thread_id (в отдельную тему)
+            try:
+                print(f"Отправка заявки на дополнительное задание HellMode в группу: user_id={user_id}, "
+                      f"chat_id={TROPHY_GROUP_CHAT_ID}, topic_id={TROPHY_GROUP_TOPIC_ID}, "
+                      f"media_count={len(media_payload)}")
+                
+                await send_media_to_telegram_group(
+                    bot_token=BOT_TOKEN,
+                    chat_id=TROPHY_GROUP_CHAT_ID,
+                    media_items=media_payload,
+                    message_text=message_text,
+                    reply_markup=reply_markup,
+                    message_thread_id=TROPHY_GROUP_TOPIC_ID
+                )
+                print(f"Заявка на дополнительное задание HellMode успешно отправлена в группу: user_id={user_id}")
+            except Exception as e:
+                print(f"ERROR: Ошибка отправки заявки на дополнительное задание HellMode в группу: {e}")
+                print(f"  User ID: {user_id}")
+                print(f"  Chat ID: {TROPHY_GROUP_CHAT_ID}, Topic ID: {TROPHY_GROUP_TOPIC_ID}")
+                traceback.print_exc()
+                
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Ошибка отправки заявки в группу модераторов: {str(e)}. "
+                           f"Попробуйте позже или обратитесь к администратору."
+                )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка обработки изображений: {str(e)}"
+        )
+    
+    # Добавляем pending запись после успешной отправки заявки
+    add_pending_application(DB_PATH, user_id, 'additional_hellmode_quest', 'additional_hellmode_quest')
+    
+    return {
+        "status": "ok",
+        "success": True
+    }
+
+
+@app.post("/api/hellmodeQuest.additional.approve")
+async def approve_additional_hellmode_quest_application(
+    user_id: int = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Одобряет заявку на выполнение дополнительного задания HellMode.
+    Вызывается ботом при нажатии кнопки "Одобрить".
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Получаем дополнительное задание
+    quest = get_additional_hellmode_quest(DB_PATH)
+    if not quest:
+        raise HTTPException(status_code=400, detail="Дополнительное задание HellMode не найдено")
+    
+    # Получаем награду магатамы из задания
+    reward = quest.get('reward', 0)
+    if reward <= 0:
+        raise HTTPException(status_code=400, detail="Награда за задание не указана или равна нулю")
+    
+    # Рассчитываем награду очищенного снаряжения для пользователя
+    purified_reward = calculate_additional_quest_reward(DB_PATH, user_id)
+    
+    # Обновляем баланс магатамы пользователя
+    success = update_user_balance(DB_PATH, user_id, reward)
+    if not success:
+        raise HTTPException(status_code=500, detail="Ошибка обновления баланса магатамы в БД")
+    
+    # Обновляем баланс purified пользователя (если награда больше нуля)
+    if purified_reward > 0:
+        success = update_user_purified(DB_PATH, user_id, purified_reward)
+        if not success:
+            raise HTTPException(status_code=500, detail="Ошибка обновления баланса purified в БД")
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    psn_id = user_profile.get('psn_id', '')
+    avatar_url = user_profile.get('avatar_url', '')
+    
+    # Отмечаем задание как выполненное
+    mark_quest_done(DB_PATH, user_id, psn_id, 'additional_hellmode')
+    
+    # Получаем информацию о задании для уведомлений
+    map_name = quest.get('map_name', '')
+    class_name = quest.get('class_name', '')
+    gear_name = quest.get('gear_name', '')
+    emote_name = quest.get('emote_name', '')
+    
+    # Отправляем уведомление пользователю в личку
+    try:
+        user_notification = f"""✅ <b>Ваша заявка на дополнительное задание HellMode была одобрена!</b>
+
+🗺️ <b>Карта:</b> {map_name}
+⚔️ <b>Класс:</b> {class_name}
+💣 <b>Орудие:</b> {gear_name}
+😊 <b>Эмоция:</b> {emote_name}
+
+💰 <b>Награда:</b> +{reward} Магатама
+💎 <b>Дополнительно:</b> +{purified_reward} Очищенное снаряжение"""
+        
+        await send_telegram_single_media(
+            bot_token=BOT_TOKEN,
+            chat_id=str(user_id),
+            media_type='photo',
+            media_path='/root/gyozenbot/src/banner.png',
+            caption=user_notification
+        )
+    except Exception as e:
+        print(f"ERROR approve_additional_hellmode_quest_application: Ошибка отправки уведомления пользователю {user_id}: {e}")
+        traceback.print_exc()
+        # Не прерываем выполнение, так как баланс уже обновлен
+    
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'additional_hellmode_quest', 'additional_hellmode_quest')
+    
+    # Логируем событие выполнения дополнительного задания HellMode
+    try:
+        log_recent_event(
+            DB_PATH,
+            event_type='additional_hellmode_quest_completed',
+            user_id=user_id,
+            psn_id=psn_id,
+            avatar_url=avatar_url,
+            payload={
+                'quest_type': 'additional_hellmode',
+                'map_name': map_name,
+                'class_name': class_name,
+                'gear_name': gear_name,
+                'emote_name': emote_name,
+                'reward': reward,
+                'purified_reward': purified_reward,
+            }
+        )
+    except Exception as log_error:
+        print(f"Не удалось логировать событие дополнительного задания HellMode: {log_error}")
+    
+    # Поздравление отправляется из бота, а не из API (как для трофеев)
+    
+    return {
+        "status": "ok",
+        "success": True,
+        "psn_id": psn_id,
+        "user_id": user_id,
+        "reward": reward,
+        "purified_reward": purified_reward
+    }
+
+
+@app.post("/api/hellmodeQuest.additional.reject")
+async def reject_additional_hellmode_quest_application(
+    user_id: int = Form(...),
+    reason: str = Form(...),
+    moderator_username: str = Form(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Отклоняет заявку на выполнение дополнительного задания HellMode.
+    Вызывается ботом после получения причины отклонения от модератора.
+    """
+    # Проверка авторизации бота
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    # Получаем дополнительное задание для информации в уведомлении
+    quest = get_additional_hellmode_quest(DB_PATH)
+    
+    # Получаем информацию о пользователе
+    user_profile = get_user(DB_PATH, user_id)
+    if not user_profile:
+        raise HTTPException(status_code=404, detail="Профиль пользователя не найден")
+    
+    # Получаем информацию о задании для уведомления
+    map_name = quest.get('map_name', '') if quest else ''
+    class_name = quest.get('class_name', '') if quest else ''
+    gear_name = quest.get('gear_name', '') if quest else ''
+    emote_name = quest.get('emote_name', '') if quest else ''
+    
+    # Отправляем уведомление пользователю в личку
+    try:
+        user_notification = f"""❌ <b>К сожалению, ваша заявка на дополнительное задание HellMode была отклонена.</b>
+
+🗺️ <b>Карта:</b> {map_name}
+⚔️ <b>Класс:</b> {class_name}
+💣 <b>Орудие:</b> {gear_name}
+😊 <b>Эмоция:</b> {emote_name}
+
+Причина: {reason}"""
+        
+        await send_telegram_single_media(
+            bot_token=BOT_TOKEN,
+            chat_id=str(user_id),
+            media_type='photo',
+            media_path='/root/gyozenbot/src/banner.png',
+            caption=user_notification
+        )
+    except Exception as e:
+        print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+    
+    # Удаляем pending запись
+    remove_pending_application(DB_PATH, user_id, 'additional_hellmode_quest', 'additional_hellmode_quest')
     
     return {
         "status": "ok",

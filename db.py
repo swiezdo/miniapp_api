@@ -380,7 +380,7 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
                 return None
             
             cursor.execute('''
-                SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties, avatar_url, balance, active_theme_key
+                SELECT user_id, real_name, psn_id, platforms, modes, goals, difficulties, avatar_url, balance, active_theme_key, purified
                 FROM users WHERE user_id = ?
             ''', (user_id,))
             
@@ -404,7 +404,8 @@ def get_user(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
                 'avatar_url': row[7],
                 'birthday': birthday,
                 'balance': row[8] if len(row) > 8 else 0,
-                'active_theme_key': row[9] if len(row) > 9 and row[9] else 'default'
+                'active_theme_key': row[9] if len(row) > 9 and row[9] else 'default',
+                'purified': row[10] if len(row) > 10 else 0
             }
             
             return profile
@@ -437,6 +438,34 @@ def update_user_balance(db_path: str, user_id: int, amount: int) -> bool:
             return cursor.rowcount > 0
     except sqlite3.Error as e:
         print(f"Ошибка обновления баланса пользователя: {e}")
+        traceback.print_exc()
+        return False
+
+
+def update_user_purified(db_path: str, user_id: int, amount: int) -> bool:
+    """
+    Увеличивает баланс очищенного снаряжения (purified) пользователя на указанную сумму.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя Telegram
+        amount: Сумма для добавления к балансу purified
+    
+    Returns:
+        True при успешном обновлении, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            cursor.execute('''
+                UPDATE users SET purified = purified + ? WHERE user_id = ?
+            ''', (amount, user_id))
+            
+            return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        print(f"Ошибка обновления баланса purified пользователя: {e}")
         traceback.print_exc()
         return False
 
@@ -2160,12 +2189,13 @@ def update_rotation_week(db_path: str) -> bool:
         return False
 
 
-def get_current_hellmode_quest(db_path: str) -> Optional[Dict[str, Any]]:
+def get_current_hellmode_quest(db_path: str, quest_id: int = 1) -> Optional[Dict[str, Any]]:
     """
-    Получает текущее задание HellMode из базы данных.
+    Получает задание HellMode из базы данных по ID.
     
     Args:
         db_path: Путь к файлу базы данных
+        quest_id: ID задания (1 - еженедельное, 2 - дополнительное)
     
     Returns:
         Словарь с полями: map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward
@@ -2179,8 +2209,8 @@ def get_current_hellmode_quest(db_path: str) -> Optional[Dict[str, Any]]:
             cursor.execute('''
                 SELECT map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward
                 FROM hellmode_quest
-                LIMIT 1
-            ''')
+                WHERE id = ?
+            ''', (quest_id,))
             
             row = cursor.fetchone()
             if not row:
@@ -2205,9 +2235,22 @@ def get_current_hellmode_quest(db_path: str) -> Optional[Dict[str, Any]]:
             }
             
     except sqlite3.Error as e:
-        print(f"Ошибка получения текущего задания HellMode: {e}")
+        print(f"Ошибка получения задания HellMode: {e}")
         traceback.print_exc()
         return None
+
+
+def get_additional_hellmode_quest(db_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает дополнительное задание HellMode из базы данных.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+    
+    Returns:
+        Словарь с полями задания или None если задание не найдено или пустое
+    """
+    return get_current_hellmode_quest(db_path, quest_id=2)
 
 
 def update_hellmode_quest(
@@ -2220,10 +2263,11 @@ def update_hellmode_quest(
     class_name: str,
     gear_slug: str,
     gear_name: str,
-    reward: int
+    reward: int,
+    quest_id: int = 1
 ) -> bool:
     """
-    Обновляет текущее задание HellMode в базе данных.
+    Обновляет задание HellMode в базе данных по ID.
     
     Args:
         db_path: Путь к файлу базы данных
@@ -2236,6 +2280,7 @@ def update_hellmode_quest(
         gear_slug: Slug снаряжения
         gear_name: Название снаряжения
         reward: Награда за выполнение
+        quest_id: ID задания (1 - еженедельное, 2 - дополнительное)
     
     Returns:
         True если обновление успешно, иначе False
@@ -2245,7 +2290,7 @@ def update_hellmode_quest(
             if cursor is None:
                 return False
             
-            # Обновляем запись (в таблице всегда только одна запись)
+            # Обновляем запись по ID
             cursor.execute('''
                 UPDATE hellmode_quest
                 SET map_slug = ?, map_name = ?, 
@@ -2253,20 +2298,21 @@ def update_hellmode_quest(
                     class_slug = ?, class_name = ?,
                     gear_slug = ?, gear_name = ?,
                     reward = ?
-            ''', (map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward))
+                WHERE id = ?
+            ''', (map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward, quest_id))
             
             # Если запись не была обновлена (не существует), создаем новую
             if cursor.rowcount == 0:
                 cursor.execute('''
                     INSERT INTO hellmode_quest (
-                        map_slug, map_name, 
+                        id, map_slug, map_name, 
                         emote_slug, emote_name,
                         class_slug, class_name,
                         gear_slug, gear_name,
                         reward
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward))
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (quest_id, map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward))
             
             return True
             
@@ -2344,16 +2390,55 @@ def mark_quest_done(db_path: str, user_id: int, psn_id: str, quest_type: str) ->
         db_path: Путь к файлу базы данных
         user_id: ID пользователя
         psn_id: PSN ID пользователя
-        quest_type: Тип задания ('hellmode', 'story', 'survival', 'trials')
+        quest_type: Тип задания ('hellmode', 'story', 'survival', 'trials', 'additional_hellmode')
     
     Returns:
         True если обновление успешно, иначе False
     """
-    valid_quest_types = {'hellmode', 'story', 'survival', 'trials'}
+    valid_quest_types = {'hellmode', 'story', 'survival', 'trials', 'additional_hellmode'}
     if quest_type not in valid_quest_types:
         print(f"Ошибка: недопустимый тип задания: {quest_type}")
         return False
     
+    # additional_hellmode не влияет на all_completed, обрабатываем отдельно
+    if quest_type == 'additional_hellmode':
+        try:
+            with db_connection(db_path) as cursor:
+                if cursor is None:
+                    return False
+                
+                # Получаем текущее состояние
+                cursor.execute('''
+                    SELECT additional_hellmode, psn_id
+                    FROM quests_done
+                    WHERE user_id = ?
+                ''', (user_id,))
+                row = cursor.fetchone()
+                
+                if row:
+                    additional_hellmode, existing_psn_id = row
+                    # Обновляем только additional_hellmode
+                    cursor.execute('''
+                        UPDATE quests_done
+                        SET additional_hellmode = 1
+                        WHERE user_id = ?
+                    ''', (user_id,))
+                else:
+                    # Создаем новую запись только с additional_hellmode
+                    cursor.execute('''
+                        INSERT INTO quests_done 
+                        (user_id, psn_id, hellmode, story, survival, trials, all_completed, first_completed_at, additional_hellmode)
+                        VALUES (?, ?, 0, 0, 0, 0, 0, NULL, 1)
+                    ''', (user_id, psn_id))
+                
+                return True
+                
+        except sqlite3.Error as e:
+            print(f"Ошибка отметки дополнительного задания как выполненного: {e}")
+            traceback.print_exc()
+            return False
+    
+    # Обычные задания (hellmode, story, survival, trials)
     try:
         with db_connection(db_path) as cursor:
             if cursor is None:
@@ -2361,17 +2446,19 @@ def mark_quest_done(db_path: str, user_id: int, psn_id: str, quest_type: str) ->
             
             # Получаем текущее состояние
             cursor.execute('''
-                SELECT hellmode, story, survival, trials, all_completed, first_completed_at
+                SELECT hellmode, story, survival, trials, all_completed, first_completed_at, additional_hellmode
                 FROM quests_done
                 WHERE user_id = ?
             ''', (user_id,))
             row = cursor.fetchone()
             
             if row:
-                hellmode, story, survival, trials, all_completed, first_completed_at = row
+                hellmode, story, survival, trials, all_completed, first_completed_at, additional_hellmode = row
+                if additional_hellmode is None:
+                    additional_hellmode = 0
             else:
                 # Записи нет, создаем новую
-                hellmode, story, survival, trials, all_completed, first_completed_at = 0, 0, 0, 0, 0, None
+                hellmode, story, survival, trials, all_completed, first_completed_at, additional_hellmode = 0, 0, 0, 0, 0, None, 0
             
             # Вычисляем сумму заданий до обновления
             sum_before = hellmode + story + survival + trials
@@ -2404,9 +2491,9 @@ def mark_quest_done(db_path: str, user_id: int, psn_id: str, quest_type: str) ->
             # Вставляем или обновляем запись
             cursor.execute('''
                 INSERT OR REPLACE INTO quests_done 
-                (user_id, psn_id, hellmode, story, survival, trials, all_completed, first_completed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, psn_id, hellmode, story, survival, trials, all_completed, first_completed_at))
+                (user_id, psn_id, hellmode, story, survival, trials, all_completed, first_completed_at, additional_hellmode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, psn_id, hellmode, story, survival, trials, all_completed, first_completed_at, additional_hellmode))
             
             return True
             
@@ -2423,12 +2510,12 @@ def is_quest_done(db_path: str, user_id: int, quest_type: str) -> bool:
     Args:
         db_path: Путь к файлу базы данных
         user_id: ID пользователя
-        quest_type: Тип задания ('hellmode', 'story', 'survival', 'trials')
+        quest_type: Тип задания ('hellmode', 'story', 'survival', 'trials', 'additional_hellmode')
     
     Returns:
         True если задание выполнено, иначе False
     """
-    valid_quest_types = {'hellmode', 'story', 'survival', 'trials'}
+    valid_quest_types = {'hellmode', 'story', 'survival', 'trials', 'additional_hellmode'}
     if quest_type not in valid_quest_types:
         return False
     
@@ -2457,12 +2544,14 @@ def is_quest_done(db_path: str, user_id: int, quest_type: str) -> bool:
 def reset_weekly_quests(db_path: str) -> bool:
     """
     Сбрасывает задания для новой недели.
+    Сбрасывает оба задания HellMode (еженедельное и дополнительное) в таблице hellmode_quest.
     
-    Логика сброса:
+    Логика сброса quests_done:
     - Для пользователей с all_completed > 0:
       * Если все 4 задания выполнены: сбросить только задания (в 0), сохранить all_completed
       * Если не все задания выполнены: сбросить all_completed в 0 и удалить запись
     - Для пользователей с all_completed = 0: удалить запись
+    - additional_hellmode всегда сбрасывается вместе с основными заданиями
     
     Args:
         db_path: Путь к файлу базы данных
@@ -2475,25 +2564,39 @@ def reset_weekly_quests(db_path: str) -> bool:
             if cursor is None:
                 return False
             
+            # Сбрасываем оба задания HellMode (еженедельное и дополнительное)
+            cursor.execute('''
+                UPDATE hellmode_quest
+                SET map_slug = '', map_name = '', 
+                    emote_slug = '', emote_name = '',
+                    class_slug = '', class_name = '',
+                    gear_slug = '', gear_name = '',
+                    reward = 0
+                WHERE id IN (1, 2)
+            ''')
+            
             # Получаем всех пользователей с их статусом
             cursor.execute('''
-                SELECT user_id, hellmode, story, survival, trials, all_completed
+                SELECT user_id, hellmode, story, survival, trials, all_completed, additional_hellmode
                 FROM quests_done
             ''')
             rows = cursor.fetchall()
             
             for row in rows:
-                user_id, hellmode, story, survival, trials, all_completed = row
+                user_id, hellmode, story, survival, trials, all_completed, additional_hellmode = row
+                if additional_hellmode is None:
+                    additional_hellmode = 0
                 
                 # Считаем количество выполненных заданий
                 completed_count = hellmode + story + survival + trials
                 
                 if all_completed > 0:
                     # Если все 4 задания выполнены - сбросить только задания, сохранить all_completed
+                    # Также сбрасываем additional_hellmode
                     if completed_count == 4:
                         cursor.execute('''
                             UPDATE quests_done
-                            SET hellmode = 0, story = 0, survival = 0, trials = 0
+                            SET hellmode = 0, story = 0, survival = 0, trials = 0, additional_hellmode = 0
                             WHERE user_id = ?
                         ''', (user_id,))
                     else:
@@ -2517,6 +2620,45 @@ def reset_weekly_quests(db_path: str) -> bool:
         return False
 
 
+def calculate_additional_quest_reward(db_path: str, user_id: int) -> int:
+    """
+    Рассчитывает награду для дополнительного задания HellMode.
+    Формула: (hellmode + story + survival + trials) + all_completed
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        Награда в виде очищенного снаряжения (purified)
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return 0
+            
+            cursor.execute('''
+                SELECT hellmode, story, survival, trials, all_completed
+                FROM quests_done
+                WHERE user_id = ?
+            ''', (user_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                hellmode, story, survival, trials, all_completed = row
+                # Формула: сумма выполненных заданий + количество недель
+                reward = (hellmode + story + survival + trials) + (all_completed or 0)
+                return reward
+            else:
+                # Если записи нет, награда = 0
+                return 0
+                
+    except sqlite3.Error as e:
+        print(f"Ошибка расчета награды для дополнительного задания: {e}")
+        traceback.print_exc()
+        return 0
+
+
 def get_user_quests_status(db_path: str, user_id: int) -> Optional[Dict[str, Any]]:
     """
     Получает статус всех заданий пользователя.
@@ -2534,7 +2676,7 @@ def get_user_quests_status(db_path: str, user_id: int) -> Optional[Dict[str, Any
                 return None
             
             cursor.execute('''
-                SELECT hellmode, story, survival, trials, all_completed
+                SELECT hellmode, story, survival, trials, all_completed, additional_hellmode
                 FROM quests_done
                 WHERE user_id = ?
             ''', (user_id,))
@@ -2546,7 +2688,8 @@ def get_user_quests_status(db_path: str, user_id: int) -> Optional[Dict[str, Any
                     'story': bool(row[1]),
                     'survival': bool(row[2]),
                     'trials': bool(row[3]),
-                    'all_completed': row[4]
+                    'all_completed': row[4],
+                    'additional_hellmode': bool(row[5]) if row[5] is not None else False
                 }
             return None
             
@@ -3447,7 +3590,7 @@ def add_pending_application(
     Returns:
         True при успешном добавлении, иначе False
     """
-    valid_types = {'trophy', 'mastery', 'hellmode_quest', 'top50'}
+    valid_types = {'trophy', 'mastery', 'hellmode_quest', 'additional_hellmode_quest', 'top50'}
     if application_type not in valid_types:
         print(f"Ошибка: недопустимый тип заявки: {application_type}")
         return False
