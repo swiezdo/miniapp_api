@@ -2567,7 +2567,7 @@ async def get_recent_events_feed(
             icon_key = 'reward'
         elif event_type == 'additional_hellmode_quest_completed':
             headline = f"{psn_id} выполнил(а) дополнительное задание"
-            details = "HellMode (Доп.)"
+            details = "HellMode"
             icon_key = 'reward'
         elif event_type == 'top50_quest_completed':
             category_name = payload.get('category_name') or payload.get('category', 'ТОП-50')

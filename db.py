@@ -2601,12 +2601,24 @@ def reset_weekly_quests(db_path: str) -> bool:
                         ''', (user_id,))
                     else:
                         # Если не все задания выполнены - сбросить прогресс и удалить запись
+                        # Сначала явно сбрасываем additional_hellmode перед удалением
+                        cursor.execute('''
+                            UPDATE quests_done
+                            SET additional_hellmode = 0
+                            WHERE user_id = ?
+                        ''', (user_id,))
                         cursor.execute('''
                             DELETE FROM quests_done
                             WHERE user_id = ?
                         ''', (user_id,))
                 else:
                     # Если all_completed = 0 - удалить запись
+                    # Сначала явно сбрасываем additional_hellmode перед удалением
+                    cursor.execute('''
+                        UPDATE quests_done
+                        SET additional_hellmode = 0
+                        WHERE user_id = ?
+                    ''', (user_id,))
                     cursor.execute('''
                         DELETE FROM quests_done
                         WHERE user_id = ?
