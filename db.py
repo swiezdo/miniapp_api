@@ -442,14 +442,45 @@ def update_user_balance(db_path: str, user_id: int, amount: int) -> bool:
         return False
 
 
-def update_user_purified(db_path: str, user_id: int, amount: int) -> bool:
+def get_user_purified(db_path: str, user_id: int) -> int:
     """
-    Увеличивает баланс очищенного снаряжения (purified) пользователя на указанную сумму.
+    Получает баланс очищенного снаряжения (purified) пользователя.
     
     Args:
         db_path: Путь к файлу базы данных
         user_id: ID пользователя Telegram
-        amount: Сумма для добавления к балансу purified
+    
+    Returns:
+        Баланс purified пользователя или 0 если не найден
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return 0
+            
+            cursor.execute('''
+                SELECT purified FROM users WHERE user_id = ?
+            ''', (user_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                return row[0] if row[0] is not None else 0
+            return 0
+    except sqlite3.Error as e:
+        print(f"Ошибка получения баланса purified пользователя: {e}")
+        traceback.print_exc()
+        return 0
+
+
+def update_user_purified(db_path: str, user_id: int, amount: int) -> bool:
+    """
+    Изменяет баланс очищенного снаряжения (purified) пользователя на указанную сумму.
+    Может увеличивать (положительное значение) или уменьшать (отрицательное значение) баланс.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя Telegram
+        amount: Сумма для изменения баланса purified (может быть отрицательной)
     
     Returns:
         True при успешном обновлении, иначе False
@@ -4154,6 +4185,60 @@ def get_user_gear(db_path: str, user_id: int) -> List[Dict[str, Any]]:
         print(f"Ошибка получения снаряжения пользователя: {e}")
         traceback.print_exc()
         return []
+
+
+def update_gear_item(db_path: str, gear_id: int, updates: Dict[str, Any]) -> bool:
+    """
+    Обновляет поля предмета снаряжения в базе данных.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        gear_id: ID предмета снаряжения
+        updates: Словарь с полями для обновления (prop1_value, prop2_value, perk1, perk2)
+    
+    Returns:
+        True если успешно обновлено, иначе False
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Формируем список полей для обновления
+            set_clauses = []
+            values = []
+            
+            if 'prop1_value' in updates:
+                set_clauses.append('prop1_value = ?')
+                values.append(updates['prop1_value'])
+            
+            if 'prop2_value' in updates:
+                set_clauses.append('prop2_value = ?')
+                values.append(updates['prop2_value'])
+            
+            if 'perk1' in updates:
+                set_clauses.append('perk1 = ?')
+                values.append(updates['perk1'])
+            
+            if 'perk2' in updates:
+                set_clauses.append('perk2 = ?')
+                values.append(updates['perk2'])
+            
+            if not set_clauses:
+                return False
+            
+            # Добавляем gear_id в конец для WHERE
+            values.append(gear_id)
+            
+            query = f'UPDATE gear SET {", ".join(set_clauses)} WHERE id = ?'
+            cursor.execute(query, values)
+            
+            return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка обновления предмета снаряжения: {e}")
+        traceback.print_exc()
+        return False
 
 
 def delete_gear_item(db_path: str, gear_id: int, user_id: int) -> bool:

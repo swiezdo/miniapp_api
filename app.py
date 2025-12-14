@@ -58,6 +58,7 @@ from db import (
     get_current_hellmode_quest,
     get_additional_hellmode_quest,
     update_user_balance,
+    get_user_purified,
     update_user_purified,
     is_quest_done,
     mark_quest_done,
@@ -92,6 +93,7 @@ from db import (
     create_gear_item,
     get_user_gear,
     get_gear_item,
+    update_gear_item,
     delete_gear_item,
 )
 from image_utils import (
@@ -6360,6 +6362,382 @@ async def get_user_gear_by_id(
         print(f"Ошибка получения снаряжения пользователя {target_user_id}: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Ошибка получения снаряжения: {str(e)}")
+
+
+# ========== ФУНКЦИИ ДЛЯ ПАРСИНГА СВОЙСТВ СНАРЯЖЕНИЯ ==========
+
+def parse_property_string(prop_string: str, properties_dict: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """
+    Парсит строку свойства формата "Название|[min, max]|unit".
+    
+    Args:
+        prop_string: Строка свойства (например, "Урон в ближнем бою|[5.0, 12.0]|%")
+        properties_dict: Словарь свойств из JSON для получения правильного названия
+    
+    Returns:
+        Словарь с полями {name, min, max, unit, has_decimals} или None
+    """
+    if not prop_string or not isinstance(prop_string, str):
+        return None
+    
+    # Формат: "Название|[min, max]|unit" (unit может быть пустым)
+    match = re.match(r'^(.+?)\|\[([\d.]+),\s*([\d.]+)\]\|(.*)$', prop_string)
+    if not match:
+        return None
+    
+    name = match.group(1).strip()
+    min_str = match.group(2)
+    max_str = match.group(3)
+    unit = match.group(4).strip()
+    
+    # Если передан словарь свойств и в нем есть это свойство, используем name из словаря
+    if properties_dict and prop_string in properties_dict:
+        prop_info = properties_dict[prop_string]
+        if isinstance(prop_info, dict) and 'name' in prop_info:
+            name = prop_info['name']
+    
+    try:
+        min_val = float(min_str)
+        max_val = float(max_str)
+    except ValueError:
+        return None
+    
+    # Проверяем, был ли диапазон указан с точкой (дробный)
+    has_decimals = '.' in min_str or '.' in max_str
+    
+    return {
+        'name': name,
+        'min': min_val,
+        'max': max_val,
+        'unit': unit,
+        'has_decimals': has_decimals
+    }
+
+
+def parse_property_value(value_string: str, unit: str = '') -> Optional[float]:
+    """
+    Парсит значение свойства из строки (например, "11.9 %" -> 11.9, "1.5 сек." -> 1.5).
+    
+    Args:
+        value_string: Строка со значением (например, "11.9 %" или "25" или "1.5 сек.")
+        unit: Единица измерения (например, "%", "сек." или "") - используется для справки
+    
+    Returns:
+        Числовое значение или None
+    """
+    if not value_string:
+        return None
+    
+    # Просто извлекаем число из начала строки, игнорируя единицы измерения
+    import re
+    # Ищем число (может быть с точкой) в начале строки, возможно с пробелом после
+    match = re.match(r'^([\d.]+)', value_string.strip())
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
+    
+    return None
+
+
+def format_property_value(value: float, unit: str = '') -> str:
+    """
+    Форматирует значение свойства обратно в строку.
+    
+    Args:
+        value: Числовое значение
+        unit: Единица измерения (например, "%" или "")
+    
+    Returns:
+        Отформатированная строка (например, "11.9 %" или "25")
+    """
+    if unit:
+        # Для процентов и других единиц добавляем пробел
+        return f"{value} {unit}"
+    else:
+        # Для целых чисел без единиц
+        if value == int(value):
+            return str(int(value))
+        return str(value)
+
+
+def find_property_max(gear_key: str, category: str, property_name: str, gear_data: List[Dict[str, Any]]) -> Optional[float]:
+    """
+    Находит максимальное значение свойства из prop1/prop2 списка в gear.json.
+    
+    Args:
+        gear_key: Ключ предмета (например, "stone-katana")
+        category: Категория предмета (например, "katana")
+        property_name: Название свойства (например, "Урон в ближнем бою" или "Восстановл. после убийства")
+        gear_data: Данные из gear.json
+    
+    Returns:
+        Максимальное значение свойства или None
+    """
+    # Находим словарь свойств для правильного сопоставления названий
+    properties_dict = None
+    for section in gear_data:
+        if '_properties' in section:
+            properties_dict = section['_properties']
+            break
+    
+    # Находим секцию с нужной категорией
+    for section in gear_data:
+        if section.get('category') == category and 'items' in section:
+            # Ищем предмет по ключу
+            for item in section['items']:
+                if item.get('key') == gear_key:
+                    # Проверяем prop1 и prop2
+                    for prop_list_key in ['prop1', 'prop2']:
+                        if prop_list_key in item and isinstance(item[prop_list_key], list):
+                            for prop_string in item[prop_list_key]:
+                                # Используем словарь свойств для правильного парсинга
+                                prop_data = parse_property_string(prop_string, properties_dict)
+                                if prop_data:
+                                    # Сравниваем как полное, так и сокращенное название
+                                    if (prop_data['name'] == property_name or 
+                                        prop_string.startswith(property_name) or
+                                        property_name in prop_string):
+                                        return prop_data['max']
+                    break
+            break
+    
+    return None
+
+
+def load_gear_data() -> List[Dict[str, Any]]:
+    """
+    Загружает данные снаряжения из gear.json.
+    
+    Returns:
+        Список секций с данными снаряжения
+    """
+    gear_json_path = os.path.join(os.path.dirname(__file__), '..', 'tsushimaru_app', 'docs', 'assets', 'data', 'gear.json')
+    try:
+        with open(gear_json_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Ошибка загрузки gear.json: {e}")
+        return []
+
+
+def find_category_by_key(gear_key: str, gear_data: List[Dict[str, Any]]) -> Optional[str]:
+    """
+    Находит категорию предмета по его ключу.
+    
+    Args:
+        gear_key: Ключ предмета (например, "stone-katana")
+        gear_data: Данные из gear.json
+    
+    Returns:
+        Категория предмета или None
+    """
+    for section in gear_data:
+        if 'category' in section and 'items' in section:
+            for item in section['items']:
+                if item.get('key') == gear_key:
+                    return section['category']
+    return None
+
+
+def get_available_perks(gear_key: str, category: str, gear_data: List[Dict[str, Any]]) -> List[str]:
+    """
+    Получает список доступных талантов для предмета.
+    
+    Args:
+        gear_key: Ключ предмета
+        category: Категория предмета
+        gear_data: Данные из gear.json
+    
+    Returns:
+        Список доступных талантов
+    """
+    for section in gear_data:
+        if section.get('category') == category and 'items' in section:
+            for item in section['items']:
+                if item.get('key') == gear_key:
+                    if 'perk' in item and isinstance(item['perk'], list):
+                        return item['perk']
+                    break
+            break
+    return []
+
+
+@app.post("/api/gear/modify")
+async def modify_gear(
+    request: Request,
+    user_id: int = Depends(get_current_user)
+):
+    """
+    Модифицирует предмет снаряжения (улучшает свойство или обновляет талант).
+    
+    Args:
+        request: Request объект с JSON данными (gear_id, modification_type, property_index или talent_index)
+        user_id: ID пользователя (из dependency)
+    
+    Returns:
+        JSON с обновленным предметом
+    """
+    try:
+        import random
+        body = await request.json()
+        gear_id = body.get('gear_id')
+        modification_type = body.get('modification_type')  # 'improve_property' или 'update_talent'
+        property_index = body.get('property_index')  # 1 или 2
+        talent_index = body.get('talent_index')  # 1 или 2
+        
+        if not gear_id:
+            raise HTTPException(status_code=400, detail="Отсутствует gear_id")
+        
+        if modification_type not in ['improve_property', 'update_talent']:
+            raise HTTPException(status_code=400, detail="Некорректный modification_type")
+        
+        # Проверяем баланс очищенного снаряжения
+        purified_balance = get_user_purified(DB_PATH, user_id)
+        if purified_balance < 1:
+            raise HTTPException(status_code=400, detail="Недостаточно очищенного снаряжения (требуется 1)")
+        
+        # Получаем предмет из БД
+        gear_item = get_gear_item(DB_PATH, gear_id)
+        if not gear_item:
+            raise HTTPException(status_code=404, detail="Предмет не найден")
+        
+        # Проверяем, что предмет принадлежит пользователю
+        if gear_item.get('user_id') != user_id:
+            raise HTTPException(status_code=403, detail="Предмет не принадлежит вам")
+        
+        # Проверяем, что предмет не cursed
+        if gear_item.get('type') == 'cursed':
+            raise HTTPException(status_code=400, detail="Проклятые предметы нельзя модифицировать")
+        
+        # Загружаем данные из gear.json
+        gear_data = load_gear_data()
+        if not gear_data:
+            raise HTTPException(status_code=500, detail="Ошибка загрузки данных снаряжения")
+        
+        # Находим категорию предмета
+        category = find_category_by_key(gear_item.get('key'), gear_data)
+        if not category:
+            raise HTTPException(status_code=404, detail="Категория предмета не найдена")
+        
+        updates = {}
+        
+        if modification_type == 'improve_property':
+            if property_index not in [1, 2]:
+                raise HTTPException(status_code=400, detail="Некорректный property_index")
+            
+            # Получаем текущее свойство
+            prop_name_key = f'prop{property_index}'
+            prop_value_key = f'prop{property_index}_value'
+            
+            current_prop_name = gear_item.get(prop_name_key)
+            current_prop_value = gear_item.get(prop_value_key)
+            
+            if not current_prop_name or not current_prop_value:
+                raise HTTPException(status_code=400, detail=f"Свойство {property_index} отсутствует")
+            
+            # Находим словарь свойств для правильного сопоставления названий
+            properties_dict = None
+            for section in gear_data:
+                if '_properties' in section:
+                    properties_dict = section['_properties']
+                    break
+            
+            # Парсим текущее значение
+            # Находим единицу измерения из gear.json
+            prop_unit = ''
+            for section in gear_data:
+                if section.get('category') == category and 'items' in section:
+                    for item in section['items']:
+                        if item.get('key') == gear_item.get('key'):
+                            prop_list = item.get(f'prop{property_index}', [])
+                            for prop_string in prop_list:
+                                prop_data = parse_property_string(prop_string, properties_dict)
+                                if prop_data and prop_data['name'] == current_prop_name:
+                                    prop_unit = prop_data['unit']
+                                    break
+                            break
+                    break
+            
+            current_value = parse_property_value(current_prop_value, prop_unit)
+            if current_value is None:
+                raise HTTPException(status_code=400, detail="Ошибка парсинга текущего значения свойства")
+            
+            # Находим максимальное значение
+            max_value = find_property_max(gear_item.get('key'), category, current_prop_name, gear_data)
+            if max_value is None:
+                raise HTTPException(status_code=400, detail="Не удалось найти максимальное значение свойства")
+            
+            # Генерируем улучшение (0.1% до 0.2%)
+            improvement = random.uniform(0.1, 0.2)
+            new_value = current_value + improvement
+            
+            # Проверяем, что не превышаем максимум
+            if new_value > max_value:
+                new_value = max_value
+            
+            # Округляем до одной цифры после точки
+            new_value = round(new_value, 1)
+            
+            # Форматируем новое значение
+            new_value_str = format_property_value(new_value, prop_unit)
+            updates[prop_value_key] = new_value_str
+            
+        elif modification_type == 'update_talent':
+            if talent_index not in [1, 2]:
+                raise HTTPException(status_code=400, detail="Некорректный talent_index")
+            
+            # Получаем доступные таланты
+            available_perks = get_available_perks(gear_item.get('key'), category, gear_data)
+            if not available_perks:
+                raise HTTPException(status_code=400, detail="Таланты для этого предмета не найдены")
+            
+            # Исключаем уже имеющиеся таланты
+            current_perk1 = gear_item.get('perk1')
+            current_perk2 = gear_item.get('perk2')
+            exclude_perks = []
+            
+            # Исключаем оба текущих таланта, чтобы не было дубликатов
+            if current_perk1:
+                exclude_perks.append(current_perk1)
+            if current_perk2:
+                exclude_perks.append(current_perk2)
+            
+            # Фильтруем доступные таланты
+            filtered_perks = [p for p in available_perks if p not in exclude_perks]
+            if not filtered_perks:
+                raise HTTPException(status_code=400, detail="Нет доступных талантов для обновления")
+            
+            # Выбираем случайный талант
+            new_talent = random.choice(filtered_perks)
+            updates[f'perk{talent_index}'] = new_talent
+        
+        # Обновляем предмет в БД
+        if not update_gear_item(DB_PATH, gear_id, updates):
+            raise HTTPException(status_code=500, detail="Ошибка обновления предмета")
+        
+        # Списываем очищенное снаряжение
+        if not update_user_purified(DB_PATH, user_id, -1):
+            raise HTTPException(status_code=500, detail="Ошибка списания очищенного снаряжения")
+        
+        # Получаем обновленный предмет
+        updated_gear = get_gear_item(DB_PATH, gear_id)
+        if not updated_gear:
+            raise HTTPException(status_code=500, detail="Ошибка получения обновленного предмета")
+        
+        return {
+            "status": "ok",
+            "message": "Предмет успешно модифицирован",
+            "gear_item": updated_gear
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка модификации предмета: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка модификации предмета: {str(e)}")
 
 
 @app.post("/api/gear/disassemble")
