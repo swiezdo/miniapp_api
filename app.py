@@ -6040,7 +6040,7 @@ def generate_gear_item(item_key: str, category: str, gear_data: List[Dict]) -> O
     cursed_perks = None
     legendary_charm_props = None
     
-    # Ищем словарь свойств
+    # Сначала собираем все необходимые данные из всех секций
     for section in gear_data:
         if '_properties' in section:
             properties_dict = section['_properties']
@@ -6048,6 +6048,9 @@ def generate_gear_item(item_key: str, category: str, gear_data: List[Dict]) -> O
             cursed_perks = section['cursed_gear_perks']
         if 'legendary_charm_class_props' in section:
             legendary_charm_props = section['legendary_charm_class_props']
+    
+    # Теперь ищем предмет в нужной категории
+    for section in gear_data:
         if section.get('category') == category and 'items' in section:
             for gear_item in section['items']:
                 if gear_item.get('key') == item_key:
@@ -6084,21 +6087,43 @@ def generate_gear_item(item_key: str, category: str, gear_data: List[Dict]) -> O
     perk_list = list(item.get('perk', []))
     
     # Для легендарных оберегов добавляем свойства класса
+    selected_class = None
     if is_legendary and category == 'charm' and legendary_charm_props:
         classes = list(legendary_charm_props.keys())
-        selected_class = get_random_element(classes)
-        class_props = legendary_charm_props[selected_class]
-        
-        if class_props.get('prop1') and len(class_props['prop1']) > 0:
-            prop1_list = prop1_list + class_props['prop1']
-        if class_props.get('prop2') and len(class_props['prop2']) > 0:
-            prop2_list = prop2_list + class_props['prop2']
-        if class_props.get('perk') and len(class_props['perk']) > 0:
-            perk_list = perk_list + class_props['perk']
+        if classes:
+            selected_class = get_random_element(classes)
+            if selected_class and selected_class in legendary_charm_props:
+                class_props = legendary_charm_props[selected_class]
+                
+                prop1_before = len(prop1_list)
+                prop2_before = len(prop2_list)
+                perk_before = len(perk_list)
+                
+                if class_props and class_props.get('prop1') and len(class_props['prop1']) > 0:
+                    prop1_list = prop1_list + class_props['prop1']
+                if class_props and class_props.get('prop2') and len(class_props['prop2']) > 0:
+                    prop2_list = prop2_list + class_props['prop2']
+                if class_props and class_props.get('perk') and len(class_props['perk']) > 0:
+                    perk_list = perk_list + class_props['perk']
+                
+                prop1_added = len(prop1_list) - prop1_before
+                prop2_added = len(prop2_list) - prop2_before
+                perk_added = len(perk_list) - perk_before
+                
+                print(f'[LEGENDARY CHARM] Item: {item_key}, Selected class: {selected_class}, Added: prop1={prop1_added}, prop2={prop2_added}, perks={perk_added}')
+            else:
+                print(f'[LEGENDARY CHARM] Item: {item_key}, ERROR: selected_class is None or not in legendary_charm_props')
+        else:
+            print(f'[LEGENDARY CHARM] Item: {item_key}, ERROR: No classes found in legendary_charm_props')
+    elif is_legendary and category == 'charm':
+        print(f'[LEGENDARY CHARM] Item: {item_key}, ERROR: legendary_charm_props is None or empty')
     
     if is_legendary:
         # ЛЕГЕНДАРНЫЕ ПРЕДМЕТЫ
         result['type'] = 'legendary'
+        # Сохраняем выбранный класс для легендарных оберегов
+        if selected_class:
+            result['class'] = selected_class
         
         # Рандомим ki: 80, 110 или 120 (полный рандом)
         result['ki'] = get_random_element([80, 110, 120])
@@ -6541,7 +6566,7 @@ def find_category_by_key(gear_key: str, gear_data: List[Dict[str, Any]]) -> Opti
     return None
 
 
-def get_available_perks(gear_key: str, category: str, gear_data: List[Dict[str, Any]]) -> List[str]:
+def get_available_perks(gear_key: str, category: str, gear_data: List[Dict[str, Any]], charm_class: Optional[str] = None) -> List[str]:
     """
     Получает список доступных талантов для предмета.
     
@@ -6549,19 +6574,37 @@ def get_available_perks(gear_key: str, category: str, gear_data: List[Dict[str, 
         gear_key: Ключ предмета
         category: Категория предмета
         gear_data: Данные из gear.json
+        charm_class: Класс легендарного оберега (ronin, samurai, hunter, assassin) для добавления классовых талантов
     
     Returns:
         Список доступных талантов
     """
+    perk_list = []
+    
+    # Получаем базовые таланты предмета
     for section in gear_data:
         if section.get('category') == category and 'items' in section:
             for item in section['items']:
                 if item.get('key') == gear_key:
                     if 'perk' in item and isinstance(item['perk'], list):
-                        return item['perk']
+                        perk_list = list(item['perk'])
                     break
             break
-    return []
+    
+    # Для легендарных оберегов добавляем таланты класса
+    if category == 'charm' and charm_class:
+        legendary_charm_props = None
+        for section in gear_data:
+            if 'legendary_charm_class_props' in section:
+                legendary_charm_props = section['legendary_charm_class_props']
+                break
+        
+        if legendary_charm_props and charm_class in legendary_charm_props:
+            class_props = legendary_charm_props[charm_class]
+            if class_props and class_props.get('perk') and len(class_props['perk']) > 0:
+                perk_list = perk_list + class_props['perk']
+    
+    return perk_list
 
 
 @app.post("/api/gear/modify")
@@ -6688,8 +6731,9 @@ async def modify_gear(
             if talent_index not in [1, 2]:
                 raise HTTPException(status_code=400, detail="Некорректный talent_index")
             
-            # Получаем доступные таланты
-            available_perks = get_available_perks(gear_item.get('key'), category, gear_data)
+            # Получаем доступные таланты (включая классовые для легендарных оберегов)
+            charm_class = gear_item.get('class') if gear_item.get('type') == 'legendary' else None
+            available_perks = get_available_perks(gear_item.get('key'), category, gear_data, charm_class)
             if not available_perks:
                 raise HTTPException(status_code=400, detail="Таланты для этого предмета не найдены")
             

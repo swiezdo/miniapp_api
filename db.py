@@ -4062,8 +4062,8 @@ def create_gear_item(db_path: str, user_id: int, gear_data: Dict[str, Any]) -> O
             
             cursor.execute('''
                 INSERT INTO gear 
-                (user_id, type, ki, key, name, prop1, prop1_value, prop2, prop2_value, perk1, perk2)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (user_id, type, ki, key, name, prop1, prop1_value, prop2, prop2_value, perk1, perk2, class)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user_id,
                 gear_data.get('type', ''),
@@ -4075,7 +4075,8 @@ def create_gear_item(db_path: str, user_id: int, gear_data: Dict[str, Any]) -> O
                 gear_data.get('prop2') or None,
                 gear_data.get('prop2_value') or None,
                 gear_data.get('perk1') or None,
-                gear_data.get('perk2') or None
+                gear_data.get('perk2') or None,
+                gear_data.get('class') or None
             ))
             
             return cursor.lastrowid
@@ -4104,7 +4105,7 @@ def get_gear_item(db_path: str, gear_id: int) -> Optional[Dict[str, Any]]:
             
             cursor.execute('''
                 SELECT id, user_id, type, ki, key, name, prop1, prop1_value, 
-                       prop2, prop2_value, perk1, perk2, created_at
+                       prop2, prop2_value, perk1, perk2, class, created_at
                 FROM gear WHERE id = ?
             ''', (gear_id,))
             
@@ -4126,7 +4127,8 @@ def get_gear_item(db_path: str, gear_id: int) -> Optional[Dict[str, Any]]:
                 'prop2_value': row[9],
                 'perk1': row[10],
                 'perk2': row[11],
-                'created_at': row[12]
+                'class': row[12],
+                'created_at': row[13]
             }
         
     except sqlite3.Error as e:
@@ -4153,7 +4155,7 @@ def get_user_gear(db_path: str, user_id: int) -> List[Dict[str, Any]]:
             
             cursor.execute('''
                 SELECT id, user_id, type, ki, key, name, prop1, prop1_value, 
-                       prop2, prop2_value, perk1, perk2, created_at
+                       prop2, prop2_value, perk1, perk2, class, created_at
                 FROM gear 
                 WHERE user_id = ?
                 ORDER BY created_at DESC
@@ -4176,7 +4178,8 @@ def get_user_gear(db_path: str, user_id: int) -> List[Dict[str, Any]]:
                     'prop2_value': row[9],
                     'perk1': row[10],
                     'perk2': row[11],
-                    'created_at': row[12]
+                    'class': row[12],
+                    'created_at': row[13]
                 })
             
             return gear_items
