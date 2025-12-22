@@ -95,6 +95,8 @@ from db import (
     get_gear_item,
     update_gear_item,
     delete_gear_item,
+    check_contest_participation,
+    register_contest_participant,
 )
 from image_utils import (
     process_image_for_upload,
@@ -1791,6 +1793,91 @@ async def transfer_money(
         print(f"Ошибка при переводе: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Ошибка при переводе: {str(e)}")
+
+
+# ========== API ЭНДПОИНТЫ ДЛЯ КОНКУРСА ==========
+
+@app.post("/api/contest.check")
+async def check_contest_participation_endpoint(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Проверяет, участвовал ли пользователь уже в конкурсе.
+    Вызывается ботом при обработке команды /contest.
+    Тело запроса: {"user_id": int}
+    """
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    try:
+        body = await request.json()
+        user_id = body.get("user_id")
+        
+        if user_id is None:
+            raise HTTPException(status_code=400, detail="Не указан user_id")
+        
+        if not isinstance(user_id, int):
+            raise HTTPException(status_code=400, detail="user_id должен быть целым числом")
+        
+        already_participated = check_contest_participation(DB_PATH, user_id)
+        
+        return {
+            "already_participated": already_participated
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка при проверке участия в конкурсе: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка при проверке участия: {str(e)}")
+
+
+@app.post("/api/contest.submit")
+async def submit_contest_participation_endpoint(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    """
+    Регистрирует участника конкурса.
+    Вызывается ботом после успешной проверки фото.
+    Тело запроса: {"user_id": int}
+    """
+    if not verify_bot_authorization(authorization):
+        raise HTTPException(status_code=401, detail="Неавторизованный запрос")
+    
+    try:
+        body = await request.json()
+        user_id = body.get("user_id")
+        
+        if user_id is None:
+            raise HTTPException(status_code=400, detail="Не указан user_id")
+        
+        if not isinstance(user_id, int):
+            raise HTTPException(status_code=400, detail="user_id должен быть целым числом")
+        
+        # Проверяем, не участвовал ли уже
+        if check_contest_participation(DB_PATH, user_id):
+            raise HTTPException(status_code=400, detail="Пользователь уже участвовал в конкурсе")
+        
+        # Регистрируем участника
+        success = register_contest_participant(DB_PATH, user_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Ошибка при регистрации участника")
+        
+        return {
+            "success": True,
+            "user_id": user_id
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Ошибка при регистрации участника конкурса: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Ошибка при регистрации: {str(e)}")
 
 
 # ========== API ЭНДПОИНТЫ ДЛЯ ТРОФЕЕВ ==========

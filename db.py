@@ -2316,41 +2316,57 @@ def update_hellmode_quest(
     Returns:
         True если обновление успешно, иначе False
     """
+    conn = None
+    cursor = None
     try:
-        with db_connection(db_path) as cursor:
-            if cursor is None:
-                return False
-            
-            # Обновляем запись по ID
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Обновляем запись по ID
+        cursor.execute('''
+            UPDATE hellmode_quest
+            SET map_slug = ?, map_name = ?, 
+                emote_slug = ?, emote_name = ?,
+                class_slug = ?, class_name = ?,
+                gear_slug = ?, gear_name = ?,
+                reward = ?
+            WHERE id = ?
+        ''', (map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward, quest_id))
+        
+        # Если запись не была обновлена (не существует), создаем новую
+        if cursor.rowcount == 0:
             cursor.execute('''
-                UPDATE hellmode_quest
-                SET map_slug = ?, map_name = ?, 
-                    emote_slug = ?, emote_name = ?,
-                    class_slug = ?, class_name = ?,
-                    gear_slug = ?, gear_name = ?,
-                    reward = ?
-                WHERE id = ?
-            ''', (map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward, quest_id))
-            
-            # Если запись не была обновлена (не существует), создаем новую
-            if cursor.rowcount == 0:
-                cursor.execute('''
-                    INSERT INTO hellmode_quest (
-                        id, map_slug, map_name, 
-                        emote_slug, emote_name,
-                        class_slug, class_name,
-                        gear_slug, gear_name,
-                        reward
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (quest_id, map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward))
-            
-            return True
+                INSERT INTO hellmode_quest (
+                    id, map_slug, map_name, 
+                    emote_slug, emote_name,
+                    class_slug, class_name,
+                    gear_slug, gear_name,
+                    reward
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (quest_id, map_slug, map_name, emote_slug, emote_name, class_slug, class_name, gear_slug, gear_name, reward))
+        
+        # Явно коммитим транзакцию
+        conn.commit()
+        return True
             
     except sqlite3.Error as e:
+        if conn:
+            conn.rollback()
         print(f"Ошибка обновления задания HellMode: {e}")
         traceback.print_exc()
         return False
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Неожиданная ошибка при обновлении задания HellMode: {e}")
+        traceback.print_exc()
+        return False
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def get_top50_current_prize(db_path: str) -> Optional[int]:
@@ -4274,5 +4290,68 @@ def delete_gear_item(db_path: str, gear_id: int, user_id: int) -> bool:
         
     except sqlite3.Error as e:
         print(f"Ошибка удаления предмета снаряжения: {e}")
+        traceback.print_exc()
+        return False
+
+
+def check_contest_participation(db_path: str, user_id: int) -> bool:
+    """
+    Проверяет, участвовал ли пользователь уже в конкурсе.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        True если пользователь уже участвовал, False если нет
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            cursor.execute(
+                'SELECT user_id FROM contest_participants WHERE user_id = ?',
+                (user_id,)
+            )
+            return cursor.fetchone() is not None
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка проверки участия в конкурсе: {e}")
+        traceback.print_exc()
+        return False
+
+
+def register_contest_participant(db_path: str, user_id: int) -> bool:
+    """
+    Регистрирует участника конкурса.
+    
+    Args:
+        db_path: Путь к файлу базы данных
+        user_id: ID пользователя
+    
+    Returns:
+        True если успешно зарегистрирован, False если ошибка
+    """
+    try:
+        with db_connection(db_path) as cursor:
+            if cursor is None:
+                return False
+            
+            # Проверяем, не участвовал ли уже
+            if check_contest_participation(db_path, user_id):
+                print(f"Пользователь {user_id} уже участвовал в конкурсе")
+                return False
+            
+            # Регистрируем участника
+            cursor.execute(
+                'INSERT INTO contest_participants (user_id) VALUES (?)',
+                (user_id,)
+            )
+            
+            return True
+        
+    except sqlite3.Error as e:
+        print(f"Ошибка регистрации участника конкурса: {e}")
         traceback.print_exc()
         return False

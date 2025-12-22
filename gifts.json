@@ -24,7 +24,7 @@
   {"key": "xmas5", "name": "Шапка", "price": 500, "emoji_id": "5404715222411799587", "colors": ["#5fafff", "#d70f0f"], "category": "xmas"},
   {"key": "xmas6", "name": "Снежный шар", "price": 500, "emoji_id": "5407132395646246517", "colors": ["#0f870f", "#d7af0f"], "category": "xmas"},
   {"key": "xmas7", "name": "Варежки", "price": 500, "emoji_id": "5404591969735308062", "colors": ["#ff8787", "#870f0f"], "category": "xmas"},
-  {"key": "xmas8", "name": "Колокольчик", "price": 500, "emoji_id": "5280987947737310654", "colors": ["#875f0f", "#ffaf5f"], "category": "xmas"},
+  {"key": "xmas8", "name": "Колокольчик", "price": 500, "emoji_id": "5406823037741850333", "colors": ["#875f0f", "#ffaf5f"], "category": "xmas"},
   {"key": "xmas9", "name": "Какао", "price": 500, "emoji_id": "5427334027726055110", "colors": ["#8787af", "#87afd7"], "category": "xmas"},
   {"key": "xmas10", "name": "Бенгальская свеча", "price": 500, "emoji_id": "5426978447383615815", "colors": ["#ffd75f", "#5f5f5f"], "category": "xmas"},
   {"key": "xmas11", "name": "Пряник", "price": 500, "emoji_id": "5427132542220264551", "colors": ["#5f370f", "#af5f37"], "category": "xmas"},

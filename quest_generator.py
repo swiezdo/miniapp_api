@@ -269,42 +269,70 @@ def main():
         
         # Сохраняем еженедельное задание в БД
         print("\nСохранение еженедельного задания в базу данных...")
-        if update_hellmode_quest(
-            DB_PATH,
-            new_weekly_quest['map_slug'],
-            new_weekly_quest['map_name'],
-            new_weekly_quest['emote_slug'],
-            new_weekly_quest['emote_name'],
-            new_weekly_quest['class_slug'],
-            new_weekly_quest['class_name'],
-            new_weekly_quest['gear_slug'],
-            new_weekly_quest['gear_name'],
-            new_weekly_quest['reward'],
-            quest_id=1
-        ):
-            print("Еженедельное задание успешно сохранено!")
-        else:
-            print("Ошибка: не удалось сохранить еженедельное задание в базу данных")
+        try:
+            result = update_hellmode_quest(
+                DB_PATH,
+                new_weekly_quest['map_slug'],
+                new_weekly_quest['map_name'],
+                new_weekly_quest['emote_slug'],
+                new_weekly_quest['emote_name'],
+                new_weekly_quest['class_slug'],
+                new_weekly_quest['class_name'],
+                new_weekly_quest['gear_slug'],
+                new_weekly_quest['gear_name'],
+                new_weekly_quest['reward'],
+                quest_id=1
+            )
+            if result:
+                print("Еженедельное задание успешно сохранено!")
+                # Проверяем, что данные действительно сохранились
+                saved_quest = get_current_hellmode_quest(DB_PATH, quest_id=1)
+                if saved_quest and saved_quest.get('map_slug') == new_weekly_quest['map_slug']:
+                    print("✓ Проверка: еженедельное задание подтверждено в БД")
+                else:
+                    print("⚠ ВНИМАНИЕ: задание не найдено в БД после сохранения!")
+                    sys.exit(1)
+            else:
+                print("Ошибка: не удалось сохранить еженедельное задание в базу данных")
+                sys.exit(1)
+        except Exception as e:
+            print(f"Критическая ошибка при сохранении еженедельного задания: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
         
         # Сохраняем дополнительное задание в БД
         print("Сохранение дополнительного задания в базу данных...")
-        if update_hellmode_quest(
-            DB_PATH,
-            new_additional_quest['map_slug'],
-            new_additional_quest['map_name'],
-            new_additional_quest['emote_slug'],
-            new_additional_quest['emote_name'],
-            new_additional_quest['class_slug'],
-            new_additional_quest['class_name'],
-            new_additional_quest['gear_slug'],
-            new_additional_quest['gear_name'],
-            new_additional_quest['reward'],
-            quest_id=2
-        ):
-            print("Дополнительное задание успешно сохранено!")
-        else:
-            print("Ошибка: не удалось сохранить дополнительное задание в базу данных")
+        try:
+            result = update_hellmode_quest(
+                DB_PATH,
+                new_additional_quest['map_slug'],
+                new_additional_quest['map_name'],
+                new_additional_quest['emote_slug'],
+                new_additional_quest['emote_name'],
+                new_additional_quest['class_slug'],
+                new_additional_quest['class_name'],
+                new_additional_quest['gear_slug'],
+                new_additional_quest['gear_name'],
+                new_additional_quest['reward'],
+                quest_id=2
+            )
+            if result:
+                print("Дополнительное задание успешно сохранено!")
+                # Проверяем, что данные действительно сохранились
+                saved_quest = get_additional_hellmode_quest(DB_PATH)
+                if saved_quest and saved_quest.get('map_slug') == new_additional_quest['map_slug']:
+                    print("✓ Проверка: дополнительное задание подтверждено в БД")
+                else:
+                    print("⚠ ВНИМАНИЕ: задание не найдено в БД после сохранения!")
+                    sys.exit(1)
+            else:
+                print("Ошибка: не удалось сохранить дополнительное задание в базу данных")
+                sys.exit(1)
+        except Exception as e:
+            print(f"Критическая ошибка при сохранении дополнительного задания: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
     
     except FileNotFoundError as e:
