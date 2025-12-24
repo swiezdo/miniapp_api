@@ -2165,8 +2165,19 @@ async def submit_mastery_application(
             detail=f"Ошибка загрузки конфига мастерства: {str(e)}"
         )
     
-    # Находим категорию в конфиге
-    category = find_category_by_key(config, category_key)
+    # Проверяем структуру конфига
+    if not config or not isinstance(config, dict) or 'categories' not in config:
+        raise HTTPException(
+            status_code=500,
+            detail="Неверная структура конфига мастерства"
+        )
+    
+    # Находим категорию в конфиге напрямую (без использования функции, чтобы избежать конфликтов)
+    category = None
+    for cat in config.get('categories', []):
+        if isinstance(cat, dict) and cat.get('key') == category_key:
+            category = cat
+            break
     
     if not category:
         raise HTTPException(
@@ -2414,14 +2425,24 @@ async def approve_mastery_application(
             detail=error_msg
         )
     
+    # Логируем входящие данные для отладки
     # Загружаем конфиг для получения информации о категории
     try:
         config = load_mastery_config()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
     
-    # Находим категорию в конфиге
-    category = find_category_by_key(config, category_key)
+    # Проверяем структуру конфига
+    if not config or not isinstance(config, dict) or 'categories' not in config:
+        raise HTTPException(status_code=500, detail="Неверная структура конфига мастерства")
+    
+    # Находим категорию в конфиге напрямую (без использования функции, чтобы избежать конфликтов)
+    category = None
+    for cat in config.get('categories', []):
+        if isinstance(cat, dict) and cat.get('key') == category_key:
+            category = cat
+            break
+    
     if not category:
         raise HTTPException(status_code=400, detail=f"Категория {category_key} не найдена в конфиге")
     
@@ -3677,8 +3698,16 @@ async def reject_mastery_application(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки конфига: {str(e)}")
     
-    # Находим категорию и уровень в конфиге
-    category = find_category_by_key(config, category_key)
+    # Проверяем структуру конфига
+    if not config or not isinstance(config, dict) or 'categories' not in config:
+        raise HTTPException(status_code=500, detail="Неверная структура конфига мастерства")
+    
+    # Находим категорию в конфиге напрямую (без использования функции, чтобы избежать конфликтов)
+    category = None
+    for cat in config.get('categories', []):
+        if isinstance(cat, dict) and cat.get('key') == category_key:
+            category = cat
+            break
     level_data = None
     if category:
         for level in category.get('levels', []):
@@ -3708,7 +3737,7 @@ async def reject_mastery_application(
     except Exception as e:
         print(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
     
-    # Удаляем pending запись
+    # Удаляем pending запись (используем category_key как есть)
     remove_pending_application(DB_PATH, user_id, 'mastery', category_key, next_level)
     
     return {
@@ -3819,18 +3848,20 @@ async def get_trophies_list(user_id: int = Depends(get_current_user)):
         # Загружаем сезонные трофеи
         try:
             season_trophies = load_season_trophy_config()
-            # Фильтруем сезонные трофеи: показываем только active или полученные пользователем
+            # Добавляем ВСЕ сезонные трофеи из конфига (не только active)
+            # чтобы названия были доступны для отображения на страницах профилей
             filtered_season_trophies = []
             for trophy in season_trophies:
                 trophy_key = trophy.get('key')
                 trophy_status = trophy.get('status', 'inactive')
                 is_obtained = trophy_key in user_trophies if trophy_key else False
                 
-                # Показываем трофей, если он active или если пользователь его получил
-                if trophy_status == 'active' or is_obtained:
-                    trophy['is_season'] = True
-                    trophy['obtained'] = is_obtained
-                    filtered_season_trophies.append(trophy)
+                # Добавляем все сезонные трофеи, чтобы названия были доступны
+                trophy['is_season'] = True
+                trophy['obtained'] = is_obtained
+                # Сохраняем статус для фронтенда
+                trophy['status'] = trophy_status
+                filtered_season_trophies.append(trophy)
             
             # Объединяем списки
             trophies_list.extend(filtered_season_trophies)

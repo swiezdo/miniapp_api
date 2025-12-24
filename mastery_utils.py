@@ -20,7 +20,7 @@ def find_category_by_key(config: Dict[str, Any], category_key: str) -> Optional[
         return None
     
     for cat in config.get('categories', []):
-        if cat.get('key') == category_key:
+        if isinstance(cat, dict) and cat.get('key') == category_key:
             return cat
     
     return None
