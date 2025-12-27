@@ -2590,8 +2590,7 @@ def is_quest_done(db_path: str, user_id: int, quest_type: str) -> bool:
 
 def reset_weekly_quests(db_path: str) -> bool:
     """
-    Сбрасывает задания для новой недели.
-    Сбрасывает оба задания HellMode (еженедельное и дополнительное) в таблице hellmode_quest.
+    Сбрасывает статус выполнения заданий пользователями для новой недели.
     
     Логика сброса quests_done:
     - Для пользователей с all_completed > 0:
@@ -2610,17 +2609,6 @@ def reset_weekly_quests(db_path: str) -> bool:
         with db_connection(db_path) as cursor:
             if cursor is None:
                 return False
-            
-            # Сбрасываем оба задания HellMode (еженедельное и дополнительное)
-            cursor.execute('''
-                UPDATE hellmode_quest
-                SET map_slug = '', map_name = '', 
-                    emote_slug = '', emote_name = '',
-                    class_slug = '', class_name = '',
-                    gear_slug = '', gear_name = '',
-                    reward = 0
-                WHERE id IN (1, 2)
-            ''')
             
             # Получаем всех пользователей с их статусом
             cursor.execute('''
